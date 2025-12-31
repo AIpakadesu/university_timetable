@@ -1,9 +1,9 @@
 import type { Assignment, Day, TimetableInput } from "../domain/types";
 
 export type GridConfig = {
-  startHour: number; // 예: 9
-  endHour: number;   // 예: 18
-  slotMinutes: number; // 30
+  startHour: number;
+  endHour: number;
+  slotMinutes: number;
 };
 
 const DAYS: { key: Day; label: string }[] = [
@@ -31,10 +31,8 @@ export default function TimetableGrid(props: {
   input: TimetableInput;
   config: GridConfig;
   assignments: Assignment[];
-  // 빨간 표시할 셀들 (key = "DAY-slot")
   redCells: Set<string>;
-  // 클릭했을 때 콜백
-  onCellClick: (day: Day, slot: number) => void;
+  onCellClick: (day: Day, slot: number, e: React.MouseEvent<HTMLTableCellElement>) => void;
 }) {
   const { input, config, assignments, redCells, onCellClick } = props;
 
@@ -74,11 +72,15 @@ export default function TimetableGrid(props: {
                   const cellKey = `${d.key}-${slot}`;
                   const isRed = redCells.has(cellKey);
 
-                  const covering = assignments.find((a) => inBlock(a, d.key, slot));
+                  const coverings = assignments.filter((a) => inBlock(a, d.key, slot));
+                  const covering = coverings[0];
                   const isStart = covering && covering.block.day === d.key && covering.block.startSlot === slot;
 
                   let label = "";
-                  if (covering && isStart) {
+                  if (coverings.length >= 2) {
+                    // 겹쳐진 칸은 한 눈에 표시
+                    label = `겹침 ${coverings.length}`;
+                  } else if (covering && isStart) {
                     const off = offeringMap.get(covering.offeringId);
                     const prof = off ? profMap.get(off.professorId) : undefined;
                     label = off ? `${off.courseName} / ${prof?.name ?? "교수?"} / ${off.grade}학년` : covering.offeringId;
@@ -87,7 +89,7 @@ export default function TimetableGrid(props: {
                   return (
                     <td
                       key={d.key}
-                      onClick={() => onCellClick(d.key, slot)}
+                      onClick={(e) => onCellClick(d.key, slot, e)}
                       style={{
                         borderBottom: "1px solid #f0f0f0",
                         borderLeft: "1px solid #f5f5f5",
@@ -95,12 +97,16 @@ export default function TimetableGrid(props: {
                         cursor: "pointer",
                         verticalAlign: "top",
                         background: isRed ? "#ffe5e5" : covering ? "#f7fbff" : "white",
-                        fontWeight: isStart ? 600 : 400,
-                        color: isStart ? "#111" : "#666",
+                        fontWeight: isStart || coverings.length >= 2 ? 600 : 400,
+                        color: isStart || coverings.length >= 2 ? "#111" : "#666",
                       }}
-                      title={isRed ? "충돌/제약 위반 가능" : ""}
+                      title={
+                        isRed
+                          ? "충돌/제약 위반 가능 (Option+클릭: 삭제)"
+                          : "클릭: 배치 / Option+클릭: 삭제"
+                      }
                     >
-                      {isStart ? label : ""}
+                      {label}
                     </td>
                   );
                 })}
