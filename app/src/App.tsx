@@ -1,11 +1,10 @@
 import { useEffect } from "react";
-import { BrowserRouter, NavLink, Route, Routes } from "react-router-dom";
+import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { useAppStore } from "./domain/store";
 import { useAutoSave } from "./domain/useAutoSave";
 
-import InputPage from "./pages/InputPage";
+import PlannerPage from "./pages/PlannerPage";
 import ConstraintsPage from "./pages/ConstraintsPage";
-import PreviewPage from "./pages/PreviewPage";
 
 function TopNav() {
   const linkStyle = ({ isActive }: { isActive: boolean }) => ({
@@ -18,15 +17,8 @@ function TopNav() {
 
   return (
     <div style={{ display: "flex", gap: 8, padding: 16, borderBottom: "1px solid #eee" }}>
-      <NavLink to="/" style={linkStyle}>
-        입력
-      </NavLink>
-      <NavLink to="/constraints" style={linkStyle}>
-        제약조건
-      </NavLink>
-      <NavLink to="/preview" style={linkStyle}>
-        미리보기
-      </NavLink>
+      <NavLink to="/" style={linkStyle}>플래너</NavLink>
+      <NavLink to="/constraints" style={linkStyle}>제약조건</NavLink>
     </div>
   );
 }
@@ -34,23 +26,19 @@ function TopNav() {
 export default function App() {
   const { loading, init } = useAppStore();
 
-  useEffect(() => {
-    init();
-  }, [init]);
+  useEffect(() => { init(); }, [init]);
 
-  // ✅ 자동 저장(디바운스)
   useAutoSave(800);
 
   if (loading) return <div style={{ padding: 16 }}>로딩 중...</div>;
 
   return (
-    <BrowserRouter>
+    <HashRouter>
       <TopNav />
       <Routes>
-        <Route path="/" element={<InputPage />} />
+        <Route path="/" element={<PlannerPage />} />
         <Route path="/constraints" element={<ConstraintsPage />} />
-        <Route path="/preview" element={<PreviewPage />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }

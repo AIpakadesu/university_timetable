@@ -60,9 +60,11 @@ export function checkConflictsForPlacement(
   // (1) 과목별 allowedBlocks 제한(있을 때만)
   const allowedBlocks = availabilityMap.get(next.offeringId);
   if (allowedBlocks && allowedBlocks.length > 0) {
-    const ok = allowedBlocks.some((b) => b.day === next.block.day &&
-      b.startSlot === next.block.startSlot &&
-      b.slotLength === next.block.slotLength
+    const ok = allowedBlocks.some(
+      (b) =>
+        b.day === next.block.day &&
+        b.startSlot === next.block.startSlot &&
+        b.slotLength === next.block.slotLength
     );
     if (!ok) {
       conflicts.push({
