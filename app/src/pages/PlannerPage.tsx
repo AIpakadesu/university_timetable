@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
-import type { Assignment, Day, TimeBlock } from "../domain/types";
+import type { Assignment, Day, TimeBlock, Conflict } from "../domain/types";
 import { useAppStore } from "../domain/store";
 import TimetableGrid from "../ui/TimetableGrid";
 import { checkConflictsForPlacement } from "../engine/conflicts";
 import { suggestAlternatives } from "../engine/suggest";
+
+const GRID_CONFIG = { startHour: 9, endHour: 18, slotMinutes: 60 };
 
 function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
   const aEnd = aStart + aLen;
@@ -11,25 +13,26 @@ function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
   return aStart < bEnd && bStart < aEnd;
 }
 
-const GRID_CONFIG = { startHour: 9, endHour: 18, slotMinutes: 60 };
-
-function clamp(n: number, min: number, max: number) {
-  const x = Math.floor(Number(n));
-  if (Number.isNaN(x)) return min;
-  return Math.max(min, Math.min(max, x));
+// ✅ 여기 걸리면 "배치 자체"를 막습니다(점심/국비/교양/교수불가/희망시간대 위반)
+function hasHardConflict(conflicts: Conflict[]) {
+  return conflicts.some((c) =>
+    c.code === "LUNCH_BLOCKED" ||
+    c.code === "OFFERING_UNAVAILABLE" ||
+    c.code === "GRADE_AFTERNOON_BLOCKED" ||
+    c.code === "MAJOR_BLOCKED_FOR_LIBERAL_DAY" ||
+    c.code === "PROF_UNAVAILABLE"
+  );
 }
 
 export default function PlannerPage() {
   const {
     input,
-    setInput,
+    maxGrade,
     draftAssignments,
     placeDraft,
     removeDraftByOffering,
     selectedOfferingId,
     setSelectedOfferingId,
-    maxGrade,
-    setMaxGrade,
   } = useAppStore();
 
   const [inspect, setInspect] = useState<{
@@ -43,7 +46,7 @@ export default function PlannerPage() {
 
   const selectedOffering = selectedOfferingId ? offeringMap.get(selectedOfferingId) : undefined;
 
-  // ✅ 학년별 빨간 셀(충돌 표시) 만들기
+  // ✅ 학년별 빨간 셀(충돌 표시)
   const redCellsByGrade = useMemo(() => {
     const m = new Map<number, Set<string>>();
     for (let g = 1; g <= maxGrade; g++) m.set(g, new Set());
@@ -54,16 +57,19 @@ export default function PlannerPage() {
     const current: Assignment[] = [];
     for (const a of draftAssignments) {
       const conflicts = checkConflictsForPlacement(input, current, a);
+
+      // ✅ 배치된 결과가 충돌이면 표시(학년/교수 겹침은 빨갛게 보여주기)
       if (conflicts.length > 0) {
         const off = offeringMap.get(a.offeringId);
         const g = off?.grade;
+
+        // 배치 자체를 막는 제약은 원래 배치가 안 되므로(정상) 여기선 주로 겹침 빨간표시용
         if (g && m.has(g)) {
           for (let s = a.block.startSlot; s < a.block.startSlot + a.block.slotLength; s++) {
             m.get(g)!.add(`${a.block.day}-${s}`);
           }
         }
 
-        // 관련 과목도 빨간 표시(동일 교수/동일 학년 충돌)
         for (const c of conflicts) {
           if (!c.relatedOfferingIds) continue;
           for (const otherId of c.relatedOfferingIds) {
@@ -83,22 +89,6 @@ export default function PlannerPage() {
     return m;
   }, [draftAssignments, input, offeringMap, maxGrade]);
 
-  // 충돌 텍스트 요약(전체)
-  const conflictText = useMemo(() => {
-    const msgs: string[] = [];
-    const current: Assignment[] = [];
-    for (const a of draftAssignments) {
-      const conflicts = checkConflictsForPlacement(input, current, a);
-      if (conflicts.length > 0) {
-        const o = offeringMap.get(a.offeringId);
-        const title = o ? `${o.courseName}(${o.grade}학년)` : a.offeringId;
-        msgs.push(`- ${title}: ${conflicts.map((c) => c.message).join(" / ")}`);
-      }
-      current.push(a);
-    }
-    return msgs.join("\n");
-  }, [draftAssignments, input, offeringMap]);
-
   function inspectPlacement(grade: number, day: Day, slot: number) {
     if (!selectedOfferingId) {
       setInspect({ target: { grade, day, slot }, conflicts: ["선택된 과목이 없습니다."], alternatives: [] });
@@ -111,7 +101,7 @@ export default function PlannerPage() {
       return;
     }
 
-    // ✅ 학년이 다른 그리드에 클릭하면 배치 막기(혼동 방지)
+    // ✅ 다른 학년 그리드에 배치 금지
     if (off.grade !== grade) {
       setInspect({
         target: { grade, day, slot },
@@ -122,7 +112,10 @@ export default function PlannerPage() {
     }
 
     const current = draftAssignments.filter((a) => a.offeringId !== selectedOfferingId);
-    const test: Assignment = { offeringId: selectedOfferingId, block: { day, startSlot: slot, slotLength: off.slotLength } };
+    const test: Assignment = {
+      offeringId: selectedOfferingId,
+      block: { day, startSlot: slot, slotLength: off.slotLength },
+    };
 
     const conflicts = checkConflictsForPlacement(input, current, test);
     const conflictMsgs = conflicts.map((c) => c.message);
@@ -141,10 +134,46 @@ export default function PlannerPage() {
     setInspect({ target: { grade, day, slot }, conflicts: conflictMsgs, alternatives });
   }
 
+  function tryPlace(grade: number, day: Day, slot: number) {
+    if (!selectedOfferingId) return;
+
+    const off = offeringMap.get(selectedOfferingId);
+    if (!off) return;
+
+    // ✅ 다른 학년 그리드 금지
+    if (off.grade !== grade) return;
+
+    const current = draftAssignments.filter((a) => a.offeringId !== selectedOfferingId);
+    const next: Assignment = {
+      offeringId: selectedOfferingId,
+      block: { day, startSlot: slot, slotLength: off.slotLength },
+    };
+
+    const conflicts = checkConflictsForPlacement(input, current, next);
+
+    // ✅ 하드 제약이면 배치 금지
+    if (hasHardConflict(conflicts)) {
+      setInspect({
+        target: { grade, day, slot },
+        conflicts: conflicts.map((c) => c.message),
+        alternatives: suggestAlternatives({
+          input,
+          current,
+          offeringId: selectedOfferingId,
+          config: GRID_CONFIG,
+          max: 3,
+        }),
+      });
+      return;
+    }
+
+    // ✅ 겹침(학년/교수 충돌)은 배치 허용 + 빨강으로 표시되도록 놔둠
+    placeDraft(next);
+  }
+
   function onCellClickWithGrade(grade: number, day: Day, slot: number, e: React.MouseEvent<HTMLTableCellElement>) {
     const deleteMode = e.altKey;
 
-    // 그 학년의 배치만 히트 대상으로(혼동 방지)
     const hits = draftAssignments.filter((a) => {
       const o = offeringMap.get(a.offeringId);
       if (!o || o.grade !== grade) return false;
@@ -160,30 +189,37 @@ export default function PlannerPage() {
 
     if (!selectedOfferingId) return;
 
-    const off = offeringMap.get(selectedOfferingId);
-    if (!off) return;
-
-    // ✅ 학년 다른 곳에는 배치 금지
-    if (off.grade !== grade) return;
-
-    // 같은 과목이 이미 걸쳐 있으면 클릭으로 삭제(편의)
+    // 같은 과목을 클릭한 경우 토글 삭제
     const same = hits.find((h) => h.offeringId === selectedOfferingId);
     if (same) {
       removeDraftByOffering(selectedOfferingId);
       return;
     }
 
-    placeDraft({ offeringId: selectedOfferingId, block: { day, startSlot: slot, slotLength: off.slotLength } });
+    tryPlace(grade, day, slot);
   }
 
   function applyAlternative(b: TimeBlock) {
     if (!selectedOfferingId) return;
     const off = offeringMap.get(selectedOfferingId);
     if (!off) return;
-    placeDraft({ offeringId: selectedOfferingId, block: b });
+
+    const grade = off.grade;
+    const current = draftAssignments.filter((a) => a.offeringId !== selectedOfferingId);
+    const next: Assignment = { offeringId: selectedOfferingId, block: b };
+    const conflicts = checkConflictsForPlacement(input, current, next);
+    if (hasHardConflict(conflicts)) {
+      setInspect({
+        target: { grade, day: b.day, slot: b.startSlot },
+        conflicts: conflicts.map((c) => c.message),
+        alternatives: [],
+      });
+      return;
+    }
+
+    placeDraft(next);
   }
 
-  // ✅ 현재 학년 필터(드롭다운에서만 사용)
   const [gradeFilter, setGradeFilter] = useState<number>(1);
   const gradeOptions = Array.from({ length: maxGrade }, (_, i) => i + 1);
 
@@ -195,55 +231,7 @@ export default function PlannerPage() {
     <div style={{ padding: 16 }}>
       <h3>플래너</h3>
 
-      {/* 초기 설정: 총 학년 수 */}
-      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
-        <b>총 학년 수(초기 설정):</b>
-        <input
-          type="number"
-          min={1}
-          max={8}
-          value={maxGrade}
-          onChange={(e) => setMaxGrade(clamp(Number(e.target.value), 1, 8))}
-          style={{ width: 80, padding: 6 }}
-        />
-        <span style={{ opacity: 0.7 }}>현재 1~{maxGrade}학년 그리드를 출력합니다.</span>
-      </div>
-
-      {/* 상단: 입력/선택 */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
-        <button
-          onClick={() => {
-            const id = `p_${Math.random().toString(36).slice(2, 8)}`;
-            setInput({ professors: [...input.professors, { id, name: `교수${input.professors.length + 1}` }] });
-          }}
-        >
-          교수 추가
-        </button>
-
-        <button
-          disabled={input.professors.length === 0}
-          onClick={() => {
-            if (input.professors.length === 0) return;
-            const id = `o_${Math.random().toString(36).slice(2, 8)}`;
-            const professorId = input.professors[0].id;
-
-            const next = {
-              id,
-              courseName: `과목${input.offerings.length + 1}`,
-              grade: clamp(gradeFilter, 1, maxGrade), // ✅ 현재 필터 학년으로 생성
-              majorType: "MAJOR" as const,
-              professorId,
-              slotLength: 3, // 1시간 단위 기준 기본 3시간
-              mustBeConsecutive: true,
-            };
-
-            setInput({ offerings: [...input.offerings, next] });
-            setSelectedOfferingId(id);
-          }}
-        >
-          과목 추가
-        </button>
-
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <b>작업 학년:</b>
           <select value={gradeFilter} onChange={(e) => setGradeFilter(Number(e.target.value))} style={{ padding: 6 }}>
@@ -261,9 +249,9 @@ export default function PlannerPage() {
               const id = e.target.value;
               setSelectedOfferingId(id);
               const o = offeringMap.get(id);
-              if (o) setGradeFilter(o.grade); // ✅ 선택하면 자동으로 그 학년으로 맞춰줌
+              if (o) setGradeFilter(o.grade);
             }}
-            style={{ padding: 6, minWidth: 280 }}
+            style={{ padding: 6, minWidth: 320 }}
           >
             <option value="">(선택 안 함)</option>
             {filteredOfferings.map((o) => (
@@ -272,18 +260,14 @@ export default function PlannerPage() {
               </option>
             ))}
           </select>
-          <span style={{ opacity: 0.7 }}>
-            {selectedOffering ? `선택: ${selectedOffering.grade}학년` : ""}
-          </span>
         </div>
-      </div>
 
-      <div style={{ opacity: 0.7, marginBottom: 10 }}>
-        클릭: 배치 / ⌥Option+클릭: 삭제 / 학년이 다른 그리드에는 배치가 막힙니다.
+        <span style={{ opacity: 0.7 }}>
+          클릭: 배치 / ⌥Option+클릭: 삭제
+        </span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 14, alignItems: "start" }}>
-        {/* 왼쪽: 학년별 그리드 출력 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           {gradeOptions.map((g) => {
             const gradeAssignments = draftAssignments.filter((a) => offeringMap.get(a.offeringId)?.grade === g);
@@ -304,16 +288,8 @@ export default function PlannerPage() {
           })}
         </div>
 
-        {/* 오른쪽: 사유/대체안 패널 */}
         <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 12, position: "sticky", top: 12, height: "fit-content" }}>
           <h4 style={{ marginTop: 0 }}>불가 사유 / 대체안</h4>
-
-          <div style={{ marginBottom: 8 }}>
-            <b>선택 과목:</b>{" "}
-            <span style={{ color: selectedOfferingId ? "#111" : "#999" }}>
-              {selectedOffering ? `${selectedOffering.courseName} (${selectedOffering.grade}학년)` : "(없음)"}
-            </span>
-          </div>
 
           {!inspect.target ? (
             <div style={{ opacity: 0.7 }}>그리드 셀을 클릭하면 사유/대체안이 뜹니다.</div>
@@ -340,7 +316,7 @@ export default function PlannerPage() {
                 <b>대체 시작시간 추천:</b>
                 {inspect.alternatives.length === 0 ? (
                   <div style={{ opacity: 0.7, marginTop: 6 }}>
-                    {inspect.conflicts.length === 0 ? "충돌이 없어서 추천이 필요 없습니다." : "추천 가능한 대체 시간이 없습니다."}
+                    추천 가능한 대체 시간이 없습니다.
                   </div>
                 ) : (
                   <ul style={{ marginTop: 6 }}>
@@ -356,13 +332,6 @@ export default function PlannerPage() {
               </div>
             </>
           )}
-
-          <hr />
-
-          <h4>전체 충돌 요약</h4>
-          <pre style={{ background: "#f5f5f5", padding: 10, borderRadius: 8, whiteSpace: "pre-wrap" }}>
-            {conflictText || "현재 충돌 없음 ✅"}
-          </pre>
         </div>
       </div>
     </div>

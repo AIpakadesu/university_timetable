@@ -3,9 +3,9 @@ import { HashRouter, NavLink, Route, Routes } from "react-router-dom";
 import { useAppStore } from "./domain/store";
 import { useAutoSave } from "./domain/useAutoSave";
 
-import InitialSetupPage from "./pages/InitialSetupPage";
 import PlannerPage from "./pages/PlannerPage";
 import WishTimesPage from "./pages/WishTimesPage";
+import InitialSetupPage from "./pages/InitialSetupPage";
 
 function TopNav() {
   const linkStyle = ({ isActive }: { isActive: boolean }) => ({
@@ -18,9 +18,10 @@ function TopNav() {
 
   return (
     <div style={{ display: "flex", gap: 8, padding: 16, borderBottom: "1px solid #eee" }}>
-      <NavLink to="/setup" style={linkStyle}>초기 설정</NavLink>
+      {/* ✅ 순서: 플래너 → 희망시간 → 초기설정 */}
       <NavLink to="/" style={linkStyle}>플래너</NavLink>
       <NavLink to="/wish" style={linkStyle}>희망시간</NavLink>
+      <NavLink to="/setup" style={linkStyle}>초기 설정</NavLink>
     </div>
   );
 }
@@ -41,8 +42,8 @@ export default function App() {
       <TopNav />
       <Routes>
         <Route path="/" element={<PlannerPage />} />
-        <Route path="/setup" element={<InitialSetupPage />} />
         <Route path="/wish" element={<WishTimesPage />} />
+        <Route path="/setup" element={<InitialSetupPage />} />
       </Routes>
     </HashRouter>
   );
