@@ -1,82 +1,86 @@
 export type Day = "MON" | "TUE" | "WED" | "THU" | "FRI";
 export type MajorType = "MAJOR" | "LIBERAL";
 
-export interface Professor {
+export type Professor = {
   id: string;
   name: string;
-}
+};
 
-export interface CourseOffering {
+export type CourseOffering = {
   id: string;
   courseName: string;
   grade: number;
   majorType: MajorType;
   professorId: string;
-  slotLength: number;         // 30분 슬롯 기준 길이
+  slotLength: number; // ✅ 1시간 단위 (예: 3 = 3시간)
   mustBeConsecutive: boolean;
-}
+};
 
-export interface TimeBlock {
+export type GovtTrainingRule = {
+  grade: number;
+  afternoonStartSlot: number; // (09시 시작 기준 13시는 4)
+};
+
+export type MajorBlockedRule = {
   day: Day;
   startSlot: number;
   slotLength: number;
-}
+};
 
-export interface Assignment {
+export type TimeBlock = {
+  day: Day;
+  startSlot: number;
+  slotLength: number;
+};
+
+export type LunchRule = TimeBlock; // ✅ 전체 공통 불가(점심시간)
+
+export type ProfessorUnavailableRule = {
+  professorId: string;
+  blocks: TimeBlock[]; // ✅ 교수 불가시간(보통 slotLength=1)
+};
+
+export type OfferingAvailability = {
+  offeringId: string;
+  allowedBlocks: TimeBlock[]; // ✅ 과목 희망(가능) 시작시간 목록
+};
+
+export type Assignment = {
   offeringId: string;
   block: TimeBlock;
-}
+};
 
-export type ConflictCode =
-  | "GRADE_CONFLICT"
-  | "PROF_CONFLICT"
-  | "GRADE_AFTERNOON_BLOCKED"
-  | "MAJOR_BLOCKED_FOR_LIBERAL_DAY"
-  | "PROF_UNAVAILABLE"
-  | "OFFERING_UNAVAILABLE";
-
-export interface Conflict {
-  code: ConflictCode;
+export type Conflict = {
+  code:
+    | "OFFERING_UNAVAILABLE"
+    | "GRADE_AFTERNOON_BLOCKED"
+    | "MAJOR_BLOCKED_FOR_LIBERAL_DAY"
+    | "PROF_UNAVAILABLE"
+    | "GRADE_CONFLICT"
+    | "PROF_CONFLICT"
+    | "LUNCH_BLOCKED";
   message: string;
-  relatedOfferingIds?: string[];
   day?: Day;
   slot?: number;
-}
+  relatedOfferingIds?: string[];
+};
 
-export interface GovtTrainingRule {
-  grade: number;
-  afternoonStartSlot: number;
-}
+export type TimetableSolution = {
+  id: string;
+  name: string;
+  assignments: Assignment[];
+};
 
-export interface MajorBlockedRule {
-  day: Day;
-  startSlot: number;
-  slotLength: number;
-}
-
-export interface ProfessorUnavailableRule {
-  professorId: string;
-  blocks: TimeBlock[];
-}
-
-export interface OfferingAvailability {
-  offeringId: string;
-  allowedBlocks: TimeBlock[];
-}
-
-export interface TimetableInput {
+export type TimetableInput = {
   professors: Professor[];
   offerings: CourseOffering[];
 
+  // ✅ 초기 설정 탭에서 관리
+  lunchRules: LunchRule[];
   govtTrainingRules: GovtTrainingRule[];
   majorBlockedRules: MajorBlockedRule[];
+
+  // ✅ 희망시간 탭에서 관리
   professorUnavailableRules: ProfessorUnavailableRule[];
-
   availability: OfferingAvailability[];
-}
-
-export interface TimetableSolution {
-  id: string;
-  assignments: Assignment[];
-  score: number;
-}
+};

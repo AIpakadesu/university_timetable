@@ -9,19 +9,17 @@ type AppState = {
 
   input: TimetableInput;
   solutions: TimetableSolution[];
-
-  // ✅ 사용자가 직접 수정하는 임시 배치
   draftAssignments: Assignment[];
 
-  // ✅ 미리보기에서 배치할 "선택 과목"
   selectedOfferingId: string;
   setSelectedOfferingId: (id: string) => void;
 
-  init: () => Promise<void>;
+  maxGrade: number;
+  setMaxGrade: (n: number) => Promise<void>;
 
+  init: () => Promise<void>;
   setInput: (patch: Partial<TimetableInput>) => void;
 
-  setDraftAssignments: (next: Assignment[]) => void;
   placeDraft: (a: Assignment) => void;
   removeDraftByOffering: (offeringId: string) => void;
 
@@ -32,11 +30,20 @@ type AppState = {
 const emptyInput: TimetableInput = {
   professors: [],
   offerings: [],
+
+  lunchRules: [],
   govtTrainingRules: [],
   majorBlockedRules: [],
+
   professorUnavailableRules: [],
   availability: [],
 };
+
+function clampGrade(n: number) {
+  const x = Math.floor(Number(n));
+  if (Number.isNaN(x)) return 4;
+  return Math.max(1, Math.min(8, x));
+}
 
 export const useAppStore = create<AppState>((set, get) => ({
   presetId: null,
@@ -49,41 +56,43 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedOfferingId: "",
   setSelectedOfferingId: (id) => {
     set({ selectedOfferingId: id });
-    // 선택값은 DB에 저장할 정도는 아니라서 localStorage로만 유지(새로고침 대비)
     localStorage.setItem("selectedOfferingId", id);
+  },
+
+  maxGrade: 4,
+  setMaxGrade: async (n) => {
+    const v = clampGrade(n);
+    set({ maxGrade: v });
+    await db.meta.put({ key: "MAX_GRADE", value: String(v) });
   },
 
   init: async () => {
     set({ loading: true });
+
     await ensureDefaultPreset();
     const presetId = await getActivePresetId();
     set({ presetId });
 
-    await get().loadAll();
+    const meta = await db.meta.get("MAX_GRADE");
+    set({ maxGrade: clampGrade(meta?.value ?? 4) });
 
-    // 로드 후 선택값 복구
-    const saved = localStorage.getItem("selectedOfferingId") ?? "";
-    set({ selectedOfferingId: saved });
+    await get().loadAll();
+    set({ selectedOfferingId: localStorage.getItem("selectedOfferingId") ?? "" });
 
     set({ loading: false });
   },
 
   setInput: (patch) => {
-    const cur = get().input;
-    set({ input: { ...cur, ...patch } });
+    set({ input: { ...get().input, ...patch } });
   },
-
-  setDraftAssignments: (next) => set({ draftAssignments: next }),
 
   placeDraft: (a) => {
     const cur = get().draftAssignments;
-    const filtered = cur.filter((x) => x.offeringId !== a.offeringId);
-    set({ draftAssignments: [...filtered, a] });
+    set({ draftAssignments: [...cur.filter((x) => x.offeringId !== a.offeringId), a] });
   },
 
   removeDraftByOffering: (offeringId) => {
-    const cur = get().draftAssignments;
-    set({ draftAssignments: cur.filter((x) => x.offeringId !== offeringId) });
+    set({ draftAssignments: get().draftAssignments.filter((x) => x.offeringId !== offeringId) });
   },
 
   loadAll: async () => {
@@ -92,6 +101,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const [
       professors,
       offerings,
+      lunchRules,
       govtTrainingRules,
       majorBlockedRules,
       professorUnavailableRules,
@@ -101,6 +111,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     ] = await Promise.all([
       db.professors.where("presetId").equals(presetId).toArray(),
       db.offerings.where("presetId").equals(presetId).toArray(),
+      db.lunch.where("presetId").equals(presetId).toArray(),
       db.govtTraining.where("presetId").equals(presetId).toArray(),
       db.majorBlocked.where("presetId").equals(presetId).toArray(),
       db.profUnavailable.where("presetId").equals(presetId).toArray(),
@@ -113,8 +124,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       input: {
         professors: professors.map(({ presetId: _p, ...x }) => x),
         offerings: offerings.map(({ presetId: _p, ...x }) => x),
+
+        lunchRules: lunchRules.map(({ presetId: _p, ...x }) => x),
         govtTrainingRules: govtTrainingRules.map(({ presetId: _p, ...x }) => x),
         majorBlockedRules: majorBlockedRules.map(({ presetId: _p, ...x }) => x),
+
         professorUnavailableRules: professorUnavailableRules.map(({ presetId: _p, ...x }) => x),
         availability: availability.map(({ presetId: _p, ...x }) => x),
       },
@@ -131,6 +145,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       "rw",
       db.professors,
       db.offerings,
+      db.lunch,
       db.govtTraining,
       db.majorBlocked,
       db.profUnavailable,
@@ -140,6 +155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       async () => {
         await db.professors.where("presetId").equals(presetId).delete();
         await db.offerings.where("presetId").equals(presetId).delete();
+        await db.lunch.where("presetId").equals(presetId).delete();
         await db.govtTraining.where("presetId").equals(presetId).delete();
         await db.majorBlocked.where("presetId").equals(presetId).delete();
         await db.profUnavailable.where("presetId").equals(presetId).delete();
@@ -149,14 +165,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         await db.professors.bulkAdd(input.professors.map((x) => ({ ...x, presetId })));
         await db.offerings.bulkAdd(input.offerings.map((x) => ({ ...x, presetId })));
 
+        await db.lunch.bulkAdd(input.lunchRules.map((x) => ({ ...x, presetId })));
         await db.govtTraining.bulkAdd(input.govtTrainingRules.map((x) => ({ ...x, presetId })));
         await db.majorBlocked.bulkAdd(input.majorBlockedRules.map((x) => ({ ...x, presetId })));
-        await db.profUnavailable.bulkAdd(input.professorUnavailableRules.map((x) => ({ ...x, presetId })));
 
+        await db.profUnavailable.bulkAdd(input.professorUnavailableRules.map((x) => ({ ...x, presetId })));
         await db.availability.bulkAdd(input.availability.map((x) => ({ ...x, presetId })));
 
         await db.solutions.bulkAdd(solutions.map((x) => ({ ...x, presetId, createdAt: Date.now() })));
-
         await db.drafts.put({ presetId, assignments: draftAssignments, updatedAt: Date.now() });
       }
     );

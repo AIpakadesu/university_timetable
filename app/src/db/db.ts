@@ -8,10 +8,11 @@ import type {
   OfferingAvailability,
   TimetableSolution,
   Assignment,
+  LunchRule,
 } from "../domain/types";
 
 export interface AppMeta {
-  key: "ACTIVE_PRESET_ID";
+  key: "ACTIVE_PRESET_ID" | "MAX_GRADE";
   value: string;
 }
 
@@ -34,6 +35,10 @@ export interface GovtTrainingRow extends GovtTrainingRule {
 export interface MajorBlockedRow extends MajorBlockedRule {
   presetId: string;
 }
+export interface LunchRow extends LunchRule {
+  presetId: string;
+}
+
 export interface ProfUnavailableRow extends ProfessorUnavailableRule {
   presetId: string;
 }
@@ -46,7 +51,6 @@ export interface SolutionRow extends TimetableSolution {
   createdAt: number;
 }
 
-/** ✅ 사용자가 수정 가능한 임시 배치(미리보기에서 클릭으로 조정) */
 export interface DraftRow {
   presetId: string;
   assignments: Assignment[];
@@ -61,6 +65,8 @@ export class TimetableDB extends Dexie {
   offerings!: Table<OfferingRow, string>;
   govtTraining!: Table<GovtTrainingRow, number>;
   majorBlocked!: Table<MajorBlockedRow, number>;
+  lunch!: Table<LunchRow, number>;
+
   profUnavailable!: Table<ProfUnavailableRow, number>;
   availability!: Table<AvailabilityRow, string>;
 
@@ -79,15 +85,18 @@ export class TimetableDB extends Dexie {
 
       govtTraining: "++id, presetId",
       majorBlocked: "++id, presetId",
-      profUnavailable: "++id, presetId",
 
+      profUnavailable: "++id, presetId",
       availability: "offeringId, presetId",
       solutions: "id, presetId, createdAt",
     });
 
-    // ✅ v2: drafts 추가
     this.version(2).stores({
       drafts: "presetId",
+    });
+
+    this.version(3).stores({
+      lunch: "++id, presetId",
     });
   }
 }

@@ -1,12 +1,4 @@
-import type {
-  Assignment,
-  Conflict,
-  CourseOffering,
-  TimetableInput,
-  TimeBlock,
-  MajorBlockedRule,
-  ProfessorUnavailableRule,
-} from "../domain/types";
+import type { Assignment, Conflict, CourseOffering, TimetableInput, TimeBlock } from "../domain/types";
 
 function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
   const aEnd = aStart + aLen;
@@ -23,32 +15,23 @@ function isAfternoon(startSlot: number, afternoonStartSlot: number) {
   return startSlot >= afternoonStartSlot;
 }
 
-function isWithin(rule: MajorBlockedRule, block: TimeBlock) {
-  if (rule.day !== block.day) return false;
-  return overlaps(rule.startSlot, rule.slotLength, block.startSlot, block.slotLength);
-}
-
 function getOfferingMap(offerings: CourseOffering[]) {
   return new Map(offerings.map((o) => [o.id, o]));
 }
 
-function getProfessorUnavailMap(rules: ProfessorUnavailableRule[]) {
-  return new Map(rules.map((r) => [r.professorId, r.blocks]));
+function getProfessorUnavailMap(input: TimetableInput) {
+  return new Map(input.professorUnavailableRules.map((r) => [r.professorId, r.blocks]));
 }
 
 function getAvailabilityMap(input: TimetableInput) {
   return new Map(input.availability.map((a) => [a.offeringId, a.allowedBlocks]));
 }
 
-export function checkConflictsForPlacement(
-  input: TimetableInput,
-  current: Assignment[],
-  next: Assignment
-): Conflict[] {
+export function checkConflictsForPlacement(input: TimetableInput, current: Assignment[], next: Assignment): Conflict[] {
   const conflicts: Conflict[] = [];
 
   const offeringMap = getOfferingMap(input.offerings);
-  const profUnavailMap = getProfessorUnavailMap(input.professorUnavailableRules);
+  const profUnavailMap = getProfessorUnavailMap(input);
   const availabilityMap = getAvailabilityMap(input);
 
   const nextOffering = offeringMap.get(next.offeringId);
@@ -57,26 +40,33 @@ export function checkConflictsForPlacement(
     return conflicts;
   }
 
-  // (1) 과목별 allowedBlocks 제한(있을 때만)
+  // ✅ 점심시간(전 과목 공통)
+  if (input.lunchRules.some((b) => blockOverlapsBlock(b, next.block))) {
+    conflicts.push({
+      code: "LUNCH_BLOCKED",
+      message: "점심시간으로 인해 해당 시간에는 배치할 수 없습니다.",
+      day: next.block.day,
+      slot: next.block.startSlot,
+    });
+  }
+
+  // 과목 희망시간(allowedBlocks)
   const allowedBlocks = availabilityMap.get(next.offeringId);
   if (allowedBlocks && allowedBlocks.length > 0) {
     const ok = allowedBlocks.some(
-      (b) =>
-        b.day === next.block.day &&
-        b.startSlot === next.block.startSlot &&
-        b.slotLength === next.block.slotLength
+      (b) => b.day === next.block.day && b.startSlot === next.block.startSlot && b.slotLength === next.block.slotLength
     );
     if (!ok) {
       conflicts.push({
         code: "OFFERING_UNAVAILABLE",
-        message: "이 과목은 해당 시간에 배치할 수 없습니다(희망/가능 시간 범위 밖).",
+        message: "이 과목은 해당 시간에 배치할 수 없습니다(희망시간 범위 밖).",
         day: next.block.day,
         slot: next.block.startSlot,
       });
     }
   }
 
-  // (2) 국비교육 학년 오후 불가
+  // 국비교육 학년 오후 불가
   const govtRule = input.govtTrainingRules.find((r) => r.grade === nextOffering.grade);
   if (govtRule && isAfternoon(next.block.startSlot, govtRule.afternoonStartSlot)) {
     conflicts.push({
@@ -87,10 +77,10 @@ export function checkConflictsForPlacement(
     });
   }
 
-  // (3) 교양 운영으로 전공 배치 불가 시간
+  // 교양 운영으로 전공 배치 불가(전공만)
   if (nextOffering.majorType === "MAJOR") {
     for (const rule of input.majorBlockedRules) {
-      if (isWithin(rule, next.block)) {
+      if (rule.day === next.block.day && overlaps(rule.startSlot, rule.slotLength, next.block.startSlot, next.block.slotLength)) {
         conflicts.push({
           code: "MAJOR_BLOCKED_FOR_LIBERAL_DAY",
           message: "교양 운영으로 해당 시간에는 전공 과목 배치가 불가합니다.",
@@ -102,7 +92,7 @@ export function checkConflictsForPlacement(
     }
   }
 
-  // (4) 교수 개인 불가 시간
+  // 교수 불가시간
   const unavailBlocks = profUnavailMap.get(nextOffering.professorId) ?? [];
   if (unavailBlocks.some((b) => blockOverlapsBlock(b, next.block))) {
     conflicts.push({
@@ -113,7 +103,7 @@ export function checkConflictsForPlacement(
     });
   }
 
-  // (5) 학년 겹침 + 교수 겹침
+  // 학년/교수 시간 겹침
   const gradeConflicts: string[] = [];
   const profConflicts: string[] = [];
 
@@ -148,15 +138,5 @@ export function checkConflictsForPlacement(
     });
   }
 
-  return conflicts;
-}
-
-export function validateAllAssignments(input: TimetableInput, assignments: Assignment[]): Conflict[] {
-  const conflicts: Conflict[] = [];
-  const current: Assignment[] = [];
-  for (const a of assignments) {
-    conflicts.push(...checkConflictsForPlacement(input, current, a));
-    current.push(a);
-  }
   return conflicts;
 }

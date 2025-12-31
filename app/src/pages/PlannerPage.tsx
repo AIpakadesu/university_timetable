@@ -13,6 +13,12 @@ function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
 
 const GRID_CONFIG = { startHour: 9, endHour: 18, slotMinutes: 60 };
 
+function clamp(n: number, min: number, max: number) {
+  const x = Math.floor(Number(n));
+  if (Number.isNaN(x)) return min;
+  return Math.max(min, Math.min(max, x));
+}
+
 export default function PlannerPage() {
   const {
     input,
@@ -22,12 +28,12 @@ export default function PlannerPage() {
     removeDraftByOffering,
     selectedOfferingId,
     setSelectedOfferingId,
+    maxGrade,
+    setMaxGrade,
   } = useAppStore();
 
-  const [profFilter, setProfFilter] = useState<string>("");
-
   const [inspect, setInspect] = useState<{
-    target?: { day: Day; slot: number };
+    target?: { grade: number; day: Day; slot: number };
     conflicts: string[];
     alternatives: TimeBlock[];
   }>({ conflicts: [], alternatives: [] });
@@ -35,18 +41,12 @@ export default function PlannerPage() {
   const offeringMap = useMemo(() => new Map(input.offerings.map((o) => [o.id, o])), [input.offerings]);
   const profMap = useMemo(() => new Map(input.professors.map((p) => [p.id, p])), [input.professors]);
 
-  const shownAssignments = useMemo(() => {
-    if (!profFilter) return draftAssignments;
-    return draftAssignments.filter((a) => {
-      const o = offeringMap.get(a.offeringId);
-      return o?.professorId === profFilter;
-    });
-  }, [draftAssignments, profFilter, offeringMap]);
+  const selectedOffering = selectedOfferingId ? offeringMap.get(selectedOfferingId) : undefined;
 
-  // 충돌 표시(빨간 셀) + 요약
-  const { redCells, conflictText } = useMemo(() => {
-    const red = new Set<string>();
-    const msgs: string[] = [];
+  // ✅ 학년별 빨간 셀(충돌 표시) 만들기
+  const redCellsByGrade = useMemo(() => {
+    const m = new Map<number, Set<string>>();
+    for (let g = 1; g <= maxGrade; g++) m.set(g, new Set());
 
     const byOfferingId = new Map<string, Assignment>();
     for (const a of draftAssignments) byOfferingId.set(a.offeringId, a);
@@ -54,43 +54,70 @@ export default function PlannerPage() {
     const current: Assignment[] = [];
     for (const a of draftAssignments) {
       const conflicts = checkConflictsForPlacement(input, current, a);
-
       if (conflicts.length > 0) {
-        for (let s = a.block.startSlot; s < a.block.startSlot + a.block.slotLength; s++) {
-          red.add(`${a.block.day}-${s}`);
+        const off = offeringMap.get(a.offeringId);
+        const g = off?.grade;
+        if (g && m.has(g)) {
+          for (let s = a.block.startSlot; s < a.block.startSlot + a.block.slotLength; s++) {
+            m.get(g)!.add(`${a.block.day}-${s}`);
+          }
         }
 
+        // 관련 과목도 빨간 표시(동일 교수/동일 학년 충돌)
         for (const c of conflicts) {
           if (!c.relatedOfferingIds) continue;
           for (const otherId of c.relatedOfferingIds) {
             const other = byOfferingId.get(otherId);
-            if (!other) continue;
+            const otherOff = offeringMap.get(otherId);
+            const og = otherOff?.grade;
+            if (!other || !og || !m.has(og)) continue;
             for (let s = other.block.startSlot; s < other.block.startSlot + other.block.slotLength; s++) {
-              red.add(`${other.block.day}-${s}`);
+              m.get(og)!.add(`${other.block.day}-${s}`);
             }
           }
         }
+      }
+      current.push(a);
+    }
 
+    return m;
+  }, [draftAssignments, input, offeringMap, maxGrade]);
+
+  // 충돌 텍스트 요약(전체)
+  const conflictText = useMemo(() => {
+    const msgs: string[] = [];
+    const current: Assignment[] = [];
+    for (const a of draftAssignments) {
+      const conflicts = checkConflictsForPlacement(input, current, a);
+      if (conflicts.length > 0) {
         const o = offeringMap.get(a.offeringId);
         const title = o ? `${o.courseName}(${o.grade}학년)` : a.offeringId;
         msgs.push(`- ${title}: ${conflicts.map((c) => c.message).join(" / ")}`);
       }
-
       current.push(a);
     }
-
-    return { redCells: red, conflictText: msgs.join("\n") };
+    return msgs.join("\n");
   }, [draftAssignments, input, offeringMap]);
 
-  function inspectPlacement(day: Day, slot: number) {
+  function inspectPlacement(grade: number, day: Day, slot: number) {
     if (!selectedOfferingId) {
-      setInspect({ target: { day, slot }, conflicts: ["선택된 과목이 없습니다."], alternatives: [] });
+      setInspect({ target: { grade, day, slot }, conflicts: ["선택된 과목이 없습니다."], alternatives: [] });
       return;
     }
 
     const off = offeringMap.get(selectedOfferingId);
     if (!off) {
-      setInspect({ target: { day, slot }, conflicts: ["선택된 과목 정보를 찾을 수 없습니다."], alternatives: [] });
+      setInspect({ target: { grade, day, slot }, conflicts: ["선택 과목 정보를 찾을 수 없습니다."], alternatives: [] });
+      return;
+    }
+
+    // ✅ 학년이 다른 그리드에 클릭하면 배치 막기(혼동 방지)
+    if (off.grade !== grade) {
+      setInspect({
+        target: { grade, day, slot },
+        conflicts: [`선택 과목은 ${off.grade}학년입니다. ${grade}학년 그리드에는 배치할 수 없습니다.`],
+        alternatives: [],
+      });
       return;
     }
 
@@ -111,17 +138,20 @@ export default function PlannerPage() {
             max: 3,
           });
 
-    setInspect({ target: { day, slot }, conflicts: conflictMsgs, alternatives });
+    setInspect({ target: { grade, day, slot }, conflicts: conflictMsgs, alternatives });
   }
 
-  function onCellClick(day: Day, slot: number, e: React.MouseEvent<HTMLTableCellElement>) {
+  function onCellClickWithGrade(grade: number, day: Day, slot: number, e: React.MouseEvent<HTMLTableCellElement>) {
     const deleteMode = e.altKey;
 
-    const hits = draftAssignments.filter(
-      (a) => a.block.day === day && overlaps(a.block.startSlot, a.block.slotLength, slot, 1)
-    );
+    // 그 학년의 배치만 히트 대상으로(혼동 방지)
+    const hits = draftAssignments.filter((a) => {
+      const o = offeringMap.get(a.offeringId);
+      if (!o || o.grade !== grade) return false;
+      return a.block.day === day && overlaps(a.block.startSlot, a.block.slotLength, slot, 1);
+    });
 
-    inspectPlacement(day, slot);
+    inspectPlacement(grade, day, slot);
 
     if (deleteMode) {
       if (hits[0]) removeDraftByOffering(hits[0].offeringId);
@@ -130,31 +160,56 @@ export default function PlannerPage() {
 
     if (!selectedOfferingId) return;
 
+    const off = offeringMap.get(selectedOfferingId);
+    if (!off) return;
+
+    // ✅ 학년 다른 곳에는 배치 금지
+    if (off.grade !== grade) return;
+
+    // 같은 과목이 이미 걸쳐 있으면 클릭으로 삭제(편의)
     const same = hits.find((h) => h.offeringId === selectedOfferingId);
     if (same) {
       removeDraftByOffering(selectedOfferingId);
       return;
     }
 
-    const off = offeringMap.get(selectedOfferingId);
-    if (!off) return;
-
     placeDraft({ offeringId: selectedOfferingId, block: { day, startSlot: slot, slotLength: off.slotLength } });
   }
 
   function applyAlternative(b: TimeBlock) {
     if (!selectedOfferingId) return;
+    const off = offeringMap.get(selectedOfferingId);
+    if (!off) return;
     placeDraft({ offeringId: selectedOfferingId, block: b });
   }
 
-  const selectedName =
-    selectedOfferingId ? (offeringMap.get(selectedOfferingId)?.courseName ?? selectedOfferingId) : "(없음)";
+  // ✅ 현재 학년 필터(드롭다운에서만 사용)
+  const [gradeFilter, setGradeFilter] = useState<number>(1);
+  const gradeOptions = Array.from({ length: maxGrade }, (_, i) => i + 1);
+
+  const filteredOfferings = useMemo(() => {
+    return input.offerings.filter((o) => o.grade === gradeFilter);
+  }, [input.offerings, gradeFilter]);
 
   return (
     <div style={{ padding: 16 }}>
-      <h3>플래너(입력 + 배치 통합)</h3>
+      <h3>플래너</h3>
 
-      {/* 상단: 입력/선택 영역 */}
+      {/* 초기 설정: 총 학년 수 */}
+      <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap", marginBottom: 10 }}>
+        <b>총 학년 수(초기 설정):</b>
+        <input
+          type="number"
+          min={1}
+          max={8}
+          value={maxGrade}
+          onChange={(e) => setMaxGrade(clamp(Number(e.target.value), 1, 8))}
+          style={{ width: 80, padding: 6 }}
+        />
+        <span style={{ opacity: 0.7 }}>현재 1~{maxGrade}학년 그리드를 출력합니다.</span>
+      </div>
+
+      {/* 상단: 입력/선택 */}
       <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center", marginBottom: 10 }}>
         <button
           onClick={() => {
@@ -175,10 +230,10 @@ export default function PlannerPage() {
             const next = {
               id,
               courseName: `과목${input.offerings.length + 1}`,
-              grade: 1,
+              grade: clamp(gradeFilter, 1, maxGrade), // ✅ 현재 필터 학년으로 생성
               majorType: "MAJOR" as const,
               professorId,
-              slotLength: 3, // ✅ 1시간 단위 기준: 기본 3시간
+              slotLength: 3, // 1시간 단위 기준 기본 3시간
               mustBeConsecutive: true,
             };
 
@@ -190,142 +245,82 @@ export default function PlannerPage() {
         </button>
 
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <b>작업 학년:</b>
+          <select value={gradeFilter} onChange={(e) => setGradeFilter(Number(e.target.value))} style={{ padding: 6 }}>
+            {gradeOptions.map((g) => (
+              <option key={g} value={g}>{g}학년</option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <b>배치할 과목:</b>
-          <select value={selectedOfferingId} onChange={(e) => setSelectedOfferingId(e.target.value)} style={{ padding: 6, minWidth: 240 }}>
+          <select
+            value={selectedOfferingId}
+            onChange={(e) => {
+              const id = e.target.value;
+              setSelectedOfferingId(id);
+              const o = offeringMap.get(id);
+              if (o) setGradeFilter(o.grade); // ✅ 선택하면 자동으로 그 학년으로 맞춰줌
+            }}
+            style={{ padding: 6, minWidth: 280 }}
+          >
             <option value="">(선택 안 함)</option>
-            {input.offerings.map((o) => (
+            {filteredOfferings.map((o) => (
               <option key={o.id} value={o.id}>
                 {o.courseName} / {o.grade}학년 / {profMap.get(o.professorId)?.name ?? "교수?"}
               </option>
             ))}
           </select>
-        </div>
-
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          <b>교수별 보기:</b>
-          <select value={profFilter} onChange={(e) => setProfFilter(e.target.value)} style={{ padding: 6 }}>
-            <option value="">(전체)</option>
-            {input.professors.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
+          <span style={{ opacity: 0.7 }}>
+            {selectedOffering ? `선택: ${selectedOffering.grade}학년` : ""}
+          </span>
         </div>
       </div>
 
       <div style={{ opacity: 0.7, marginBottom: 10 }}>
-        클릭: 배치(겹침 허용) / ⌥Option+클릭: 삭제 / 오른쪽에 불가 사유 + 대체안 표시됨
+        클릭: 배치 / ⌥Option+클릭: 삭제 / 학년이 다른 그리드에는 배치가 막힙니다.
       </div>
 
-      {/* 본문: 그리드 + 패널 */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 14, alignItems: "start" }}>
-        <div>
-          <TimetableGrid
-            input={input}
-            config={GRID_CONFIG}
-            assignments={shownAssignments}
-            redCells={redCells}
-            onCellClick={onCellClick}
-          />
+        {/* 왼쪽: 학년별 그리드 출력 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {gradeOptions.map((g) => {
+            const gradeAssignments = draftAssignments.filter((a) => offeringMap.get(a.offeringId)?.grade === g);
+            const redCells = redCellsByGrade.get(g) ?? new Set<string>();
 
-          <div style={{ marginTop: 12 }}>
-            <h4 style={{ marginBottom: 6 }}>과목 목록(간단 편집)</h4>
-            <ul>
-              {input.offerings.map((o) => (
-                <li key={o.id}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <b>{o.courseName}</b>
-                    <span style={{ opacity: 0.6 }}>{o.id}</span>
-
-                    <label>
-                      학년:
-                      <input
-                        type="number"
-                        min={1}
-                        max={4}
-                        value={o.grade}
-                        onChange={(e) => {
-                          const grade = Number(e.target.value);
-                          setInput({ offerings: input.offerings.map((x) => (x.id === o.id ? { ...x, grade } : x)) });
-                        }}
-                        style={{ width: 60, marginLeft: 6 }}
-                      />
-                    </label>
-
-                    <label>
-                      전공/교양:
-                      <select
-                        value={o.majorType}
-                        onChange={(e) => {
-                          const majorType = e.target.value as "MAJOR" | "LIBERAL";
-                          setInput({ offerings: input.offerings.map((x) => (x.id === o.id ? { ...x, majorType } : x)) });
-                        }}
-                        style={{ marginLeft: 6 }}
-                      >
-                        <option value="MAJOR">전공</option>
-                        <option value="LIBERAL">교양</option>
-                      </select>
-                    </label>
-
-                    <label>
-                      담당교수:
-                      <select
-                        value={o.professorId}
-                        onChange={(e) => {
-                          const professorId = e.target.value;
-                          setInput({ offerings: input.offerings.map((x) => (x.id === o.id ? { ...x, professorId } : x)) });
-                        }}
-                        style={{ marginLeft: 6 }}
-                      >
-                        {input.professors.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label>
-                      시수(시간):
-                      <select
-                        value={o.slotLength}
-                        onChange={(e) => {
-                          const slotLength = Number(e.target.value);
-                          setInput({ offerings: input.offerings.map((x) => (x.id === o.id ? { ...x, slotLength } : x)) });
-                        }}
-                        style={{ marginLeft: 6 }}
-                      >
-                        <option value={2}>2시간</option>
-                        <option value={3}>3시간</option>
-                        <option value={4}>4시간</option>
-                      </select>
-                    </label>
-
-                    <button
-                      onClick={() => {
-                        setInput({ offerings: input.offerings.filter((x) => x.id !== o.id) });
-                        if (selectedOfferingId === o.id) setSelectedOfferingId("");
-                      }}
-                    >
-                      삭제
-                    </button>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
+            return (
+              <div key={g}>
+                <h4 style={{ margin: "6px 0" }}>{g}학년 시간표</h4>
+                <TimetableGrid
+                  input={input}
+                  config={GRID_CONFIG}
+                  assignments={gradeAssignments}
+                  redCells={redCells}
+                  onCellClick={(day, slot, e) => onCellClickWithGrade(g, day, slot, e)}
+                />
+              </div>
+            );
+          })}
         </div>
 
-        <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 12 }}>
+        {/* 오른쪽: 사유/대체안 패널 */}
+        <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 12, position: "sticky", top: 12, height: "fit-content" }}>
           <h4 style={{ marginTop: 0 }}>불가 사유 / 대체안</h4>
 
           <div style={{ marginBottom: 8 }}>
-            <b>선택 과목:</b> <span style={{ color: selectedOfferingId ? "#111" : "#999" }}>{selectedName}</span>
+            <b>선택 과목:</b>{" "}
+            <span style={{ color: selectedOfferingId ? "#111" : "#999" }}>
+              {selectedOffering ? `${selectedOffering.courseName} (${selectedOffering.grade}학년)` : "(없음)"}
+            </span>
           </div>
 
           {!inspect.target ? (
-            <div style={{ opacity: 0.7 }}>그리드에서 셀을 클릭하면 사유/대체안이 뜹니다.</div>
+            <div style={{ opacity: 0.7 }}>그리드 셀을 클릭하면 사유/대체안이 뜹니다.</div>
           ) : (
             <>
               <div style={{ marginBottom: 8 }}>
-                <b>선택 위치:</b> {inspect.target.day} / 슬롯 {inspect.target.slot}
+                <b>선택 위치:</b> {inspect.target.grade}학년 / {inspect.target.day} / 슬롯 {inspect.target.slot}
               </div>
 
               <div style={{ marginBottom: 10 }}>
