@@ -7,6 +7,7 @@ import type {
   ProfessorUnavailableRule,
   OfferingAvailability,
   TimetableSolution,
+  Assignment,
 } from "../domain/types";
 
 export interface AppMeta {
@@ -15,36 +16,27 @@ export interface AppMeta {
 }
 
 export interface Preset {
-  id: string;          // preset id
-  name: string;        // 표시 이름 (예: "2026-1 기본")
+  id: string;
+  name: string;
   createdAt: number;
   updatedAt: number;
 }
 
-/**
- * presetId로 모든 데이터를 묶어서 저장합니다.
- * 이유: 프리셋 기능(요구사항 6번)을 "DB 레벨"에서 깔끔하게 처리 가능
- */
 export interface ProfessorRow extends Professor {
   presetId: string;
 }
-
 export interface OfferingRow extends CourseOffering {
   presetId: string;
 }
-
 export interface GovtTrainingRow extends GovtTrainingRule {
   presetId: string;
 }
-
 export interface MajorBlockedRow extends MajorBlockedRule {
   presetId: string;
 }
-
 export interface ProfUnavailableRow extends ProfessorUnavailableRule {
   presetId: string;
 }
-
 export interface AvailabilityRow extends OfferingAvailability {
   presetId: string;
 }
@@ -52,6 +44,13 @@ export interface AvailabilityRow extends OfferingAvailability {
 export interface SolutionRow extends TimetableSolution {
   presetId: string;
   createdAt: number;
+}
+
+/** ✅ 사용자가 수정 가능한 임시 배치(미리보기에서 클릭으로 조정) */
+export interface DraftRow {
+  presetId: string;
+  assignments: Assignment[];
+  updatedAt: number;
 }
 
 export class TimetableDB extends Dexie {
@@ -64,7 +63,9 @@ export class TimetableDB extends Dexie {
   majorBlocked!: Table<MajorBlockedRow, number>;
   profUnavailable!: Table<ProfUnavailableRow, number>;
   availability!: Table<AvailabilityRow, string>;
+
   solutions!: Table<SolutionRow, string>;
+  drafts!: Table<DraftRow, string>;
 
   constructor() {
     super("university_timetable_db");
@@ -81,8 +82,12 @@ export class TimetableDB extends Dexie {
       profUnavailable: "++id, presetId",
 
       availability: "offeringId, presetId",
-
       solutions: "id, presetId, createdAt",
+    });
+
+    // ✅ v2: drafts 추가
+    this.version(2).stores({
+      drafts: "presetId",
     });
   }
 }
