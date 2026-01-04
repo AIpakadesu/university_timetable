@@ -1,4 +1,5 @@
 import type { Assignment, Day, TimetableInput } from "../domain/types";
+import type { MouseEvent } from "react";
 
 export type GridConfig = {
   startHour: number;
@@ -32,9 +33,22 @@ export default function TimetableGrid(props: {
   config: GridConfig;
   assignments: Assignment[];
   redCells: Set<string>;
-  onCellClick: (day: Day, slot: number, e: React.MouseEvent<HTMLTableCellElement>) => void;
+
+  // ✅ 점심시간 표시용(추가)
+  markedCells?: Set<string>;
+  markedCellLabel?: string;
+
+  onCellClick: (day: Day, slot: number, e: MouseEvent<HTMLTableCellElement>) => void;
 }) {
-  const { input, config, assignments, redCells, onCellClick } = props;
+  const {
+    input,
+    config,
+    assignments,
+    redCells,
+    markedCells = new Set<string>(),
+    markedCellLabel = "점심시간",
+    onCellClick,
+  } = props;
 
   const slotsPerHour = 60 / config.slotMinutes;
   const totalSlots = (config.endHour - config.startHour) * slotsPerHour;
@@ -71,20 +85,34 @@ export default function TimetableGrid(props: {
                 {DAYS.map((d) => {
                   const cellKey = `${d.key}-${slot}`;
                   const isRed = redCells.has(cellKey);
+                  const isLunch = markedCells.has(cellKey);
 
                   const coverings = assignments.filter((a) => inBlock(a, d.key, slot));
                   const covering = coverings[0];
-                  const isStart = covering && covering.block.day === d.key && covering.block.startSlot === slot;
+                  const hasClass = coverings.length > 0;
+                  const isStart = !!(covering && covering.block.day === d.key && covering.block.startSlot === slot);
 
                   let label = "";
                   if (coverings.length >= 2) {
-                    // 겹쳐진 칸은 한 눈에 표시
                     label = `겹침 ${coverings.length}`;
                   } else if (covering && isStart) {
                     const off = offeringMap.get(covering.offeringId);
                     const prof = off ? profMap.get(off.professorId) : undefined;
                     label = off ? `${off.courseName} / ${prof?.name ?? "교수?"} / ${off.grade}학년` : covering.offeringId;
                   }
+
+                  // ✅ 배경 우선순위:
+                  // 1) 충돌 빨강
+                  // 2) 수업 배치 파랑
+                  // 3) 점심 노랑
+                  // 4) 흰색
+                  let bg = "white";
+                  if (isLunch) bg = "#fff7d6";
+                  if (hasClass) bg = "#f7fbff";
+                  if (isRed) bg = "#ffe5e5";
+
+                  // 점심 위에 수업이 올라가면: 노랑을 유지하는 대신 “겹쳤다”를 파란 테두리로 보여줌
+                  const showLunchAndClass = isLunch && hasClass && !isRed;
 
                   return (
                     <td
@@ -96,13 +124,22 @@ export default function TimetableGrid(props: {
                         padding: "6px 8px",
                         cursor: "pointer",
                         verticalAlign: "top",
-                        background: isRed ? "#ffe5e5" : covering ? "#f7fbff" : "white",
+
+                        // ✅ 점심+수업이면 노랑 바탕 유지
+                        background: showLunchAndClass ? "#fff7d6" : bg,
+
+                        // ✅ 점심+수업 겹침을 파란 라인으로 표시
+                        boxShadow: showLunchAndClass ? "inset 0 0 0 2px rgba(40,120,255,0.35)" : "none",
+
                         fontWeight: isStart || coverings.length >= 2 ? 600 : 400,
                         color: isStart || coverings.length >= 2 ? "#111" : "#666",
+                        borderRadius: 6,
                       }}
                       title={
                         isRed
                           ? "충돌/제약 위반 가능 (Option+클릭: 삭제)"
+                          : isLunch
+                          ? `${markedCellLabel} (클릭은 가능)`
                           : "클릭: 배치 / Option+클릭: 삭제"
                       }
                     >

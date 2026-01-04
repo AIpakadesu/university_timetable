@@ -37,6 +37,20 @@ export default function PlannerPage() {
     setSelectedOfferingId,
   } = useAppStore();
 
+  // ✅ 점심시간(초기설정) 표시를 플래너 그리드에도 적용하기 위해 lunchRules → cellSet으로 변환
+  const inputAny = input as any;
+  const lunchRules = (inputAny?.lunchRules ?? []) as TimeBlock[];
+
+  const lunchCellSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const b of lunchRules) {
+      for (let t = b.startSlot; t < b.startSlot + b.slotLength; t++) {
+        s.add(`${b.day}-${t}`);
+      }
+    }
+    return s;
+  }, [lunchRules]);
+
   const [inspect, setInspect] = useState<{
     target?: { grade: number; day: Day; slot: number };
     conflicts: string[];
@@ -318,7 +332,11 @@ export default function PlannerPage() {
                   config={GRID_CONFIG}
                   assignments={gradeAssignments}
                   redCells={redCells}
-                  disabled={isDisabledGrid} // ✅ 회색/클릭불가
+                  // ✅ 점심시간 셀 표시 (TimetableGrid가 이 props를 받아야 함)
+                  markedCells={lunchCellSet}
+                  markedCellLabel="점심시간"
+                  // ✅ 다른 학년 그리드는 비활성 UI
+                  disabled={isDisabledGrid}
                   onCellClick={(day, slot, e) => onCellClickWithGrade(g, day, slot, e)}
                 />
               </div>
@@ -326,7 +344,16 @@ export default function PlannerPage() {
           })}
         </div>
 
-        <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 12, position: "sticky", top: 12, height: "fit-content" }}>
+        <div
+          style={{
+            border: "1px solid #eee",
+            borderRadius: 10,
+            padding: 12,
+            position: "sticky",
+            top: 12,
+            height: "fit-content",
+          }}
+        >
           <h4 style={{ marginTop: 0 }}>불가 사유 / 대체안</h4>
 
           {!inspect.target ? (

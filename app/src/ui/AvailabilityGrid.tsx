@@ -22,35 +22,44 @@ function slotToTime(config: GridConfig, slot: number) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
-function blockCellsSet(block: TimeBlock | null) {
+function makeCellsFromBlocks(blocks: TimeBlock[]) {
   const s = new Set<string>();
-  if (!block) return s;
-  for (let t = block.startSlot; t < block.startSlot + block.slotLength; t++) {
-    s.add(`${block.day}-${t}`);
+  for (const b of blocks) {
+    for (let t = b.startSlot; t < b.startSlot + b.slotLength; t++) {
+      s.add(`${b.day}-${t}`);
+    }
   }
   return s;
+}
+
+function makeCellsFromBlock(block: TimeBlock | null) {
+  if (!block) return new Set<string>();
+  return makeCellsFromBlocks([block]);
 }
 
 export default function AvailabilityGrid(props: {
   config: GridConfig;
 
-  // ✅ 저장된 희망시간(블록 단위): 시수만큼 범위 색칠
+  // 저장된 희망시간(블록 단위)
   selectedBlocks: TimeBlock[];
 
-  // ✅ 시작점 표시용(●)
+  // 시작점 표시용
   allowedStarts: Set<string>;
 
-  // ✅ 점심시간 같은 보조 표시(연노랑)
+  // 점심시간 같은 보조 표시(연노랑)
   markedCells?: Set<string>;
   markedCellLabel?: string;
 
-  // ✅ 경고(점심/국비 침범 가능) 시작점 표시용(⚠︎)
+  // “주의 시작점” 표시용 (침범 가능 시작점)
   warnStarts?: Set<string>;
 
-  // ✅ 마우스 오버 시 “이 시작점이면 어디까지 먹는지” 미리보기
+  // 마우스 오버/클릭 미리보기 블록
   previewBlock?: TimeBlock | null;
+
+  // 셀 위에 올라갔을 때(또는 클릭할 때) 미리보기 시작점 전달
   onHoverStart?: (day: Day, startSlot: number | null) => void;
 
+  // 시작점 토글
   onToggle: (day: Day, startSlot: number) => void;
 }) {
   const {
@@ -68,16 +77,12 @@ export default function AvailabilityGrid(props: {
   const slotsPerHour = 60 / config.slotMinutes;
   const totalSlots = (config.endHour - config.startHour) * slotsPerHour;
 
-  // ✅ 선택된 블록 범위(파란색)
-  const selectedFilled = new Set<string>();
-  for (const b of selectedBlocks) {
-    for (let t = b.startSlot; t < b.startSlot + b.slotLength; t++) {
-      selectedFilled.add(`${b.day}-${t}`);
-    }
-  }
+  const selectedFilled = makeCellsFromBlocks(selectedBlocks);
+  const previewFilled = makeCellsFromBlock(previewBlock);
 
-  // ✅ 미리보기 블록 범위(연한 파란색)
-  const previewFilled = blockCellsSet(previewBlock);
+  // ✅ 경고 사선 패턴 (배경색을 덮지 않고 backgroundImage로 얹을 거라서 깔끔함)
+  const warningStripe =
+    "repeating-linear-gradient(45deg, rgba(255, 153, 0, 0.18) 0px, rgba(255, 153, 0, 0.18) 6px, rgba(255, 153, 0, 0.04) 6px, rgba(255, 153, 0, 0.04) 12px)";
 
   return (
     <div style={{ overflow: "auto", border: "1px solid #eee", borderRadius: 10 }}>
@@ -132,64 +137,92 @@ export default function AvailabilityGrid(props: {
                 </td>
 
                 {DAYS.map((d) => {
-                  const key = `${d.key}-${slot}`;
+                  const cellKey = `${d.key}-${slot}`;
 
-                  const isLunch = markedCells.has(key);
-                  const isSelected = selectedFilled.has(key);
-                  const isPreview = previewFilled.has(key);
+                  const isLunch = markedCells.has(cellKey);
+                  const isSelected = selectedFilled.has(cellKey);
+                  const isPreview = previewFilled.has(cellKey);
 
-                  const isStartSelected = allowedStarts.has(key);
-                  const isWarnStart = warnStarts.has(key);
+                  const isStart = allowedStarts.has(cellKey);
+                  const isWarn = warnStarts.has(cellKey);
 
-                  // ✅ 배경: 점심(노랑)은 “항상” 보이게.
-                  // 선택/미리보기는 파란색으로 범위가 보이게 하되,
-                  // 점심과 겹치면 노랑을 유지 + 파란 라인(표시)만 추가해서 둘 다 보이게 처리.
-                  let bg = "white";
-                  if (isLunch) bg = "#fff7d6";
-                  if (!isLunch && isPreview) bg = "#f0f8ff"; // 미리보기(연한 파랑)
-                  if (!isLunch && isSelected) bg = "#e9f6ff"; // 선택(파랑)
+                  // ✅ 기본 배경색 (점심은 항상 노랑이 보이게)
+                  let bgColor = "white";
+                  if (isLunch) bgColor = "#fff7d6";
+                  if (!isLunch && isPreview) bgColor = "#f0f8ff";
+                  if (!isLunch && isSelected) bgColor = "#e9f6ff";
 
-                  // 점심 + (미리보기/선택) 겹침 표시용 라인
-                  const showBlueLine = isLunch && (isPreview || isSelected);
-                  const lineColor = isSelected ? "rgba(40,120,255,0.55)" : "rgba(40,120,255,0.30)";
+                  // ✅ 점심 위에 선택/미리보기 들어오면 “파란 테두리”로 겹침 표시
+                  const showBlueLine = isLunch && (isSelected || isPreview);
+                  const lineColor = isSelected
+                    ? "rgba(40,120,255,0.55)"
+                    : "rgba(40,120,255,0.30)";
+
+                  // ✅ 경고는 “칸 전체 노란 박스”가 아니라:
+                  // - (점심 칸이 아니고)
+                  // - (시작점으로 확정된 칸이 아니고)
+                  // => backgroundImage로 은은한 사선만 얹기
+                  const shouldStripe = isWarn && !isStart && !isLunch;
 
                   return (
                     <td
                       key={d.key}
-                      onMouseEnter={() => onHoverStart?.(d.key, slot)}
-                      onMouseLeave={() => onHoverStart?.(d.key, null)}
-                      onClick={() => onToggle(d.key, slot)}
                       style={{
                         borderBottom: "1px solid #f0f0f0",
                         borderLeft: "1px solid #f5f5f5",
                         padding: "6px 8px",
                         cursor: "pointer",
                         userSelect: "none",
-                        background: bg,
 
-                        // 시작점 시각화
-                        outline: isStartSelected
-                          ? "2px solid rgba(0,0,0,0.22)"
-                          : isWarnStart
-                          ? "2px solid rgba(255,140,0,0.35)"
-                          : "none",
+                        backgroundColor: bgColor,
+                        backgroundImage: shouldStripe ? warningStripe : "none",
 
-                        fontWeight: isStartSelected ? 700 : 400,
-                        color: "#222",
+                        position: "relative",
+                        borderRadius: 6,
 
-                        // 점심과 겹치면 파란 라인으로 “이 범위가 점심을 침범함”을 시각적으로 표시
+                        // 시작점은 확실하게, 그 외는 은은하게
+                        outline: isStart ? "2px solid rgba(0,0,0,0.22)" : "1px solid rgba(0,0,0,0.06)",
                         boxShadow: showBlueLine ? `inset 0 0 0 2px ${lineColor}` : "none",
                       }}
                       title={
                         isLunch
                           ? markedCellLabel
-                          : isWarnStart
+                          : isWarn
                           ? "주의: 점심/국비 제약을 침범할 수 있음 (클릭 시 경고)"
                           : "클릭: 희망시간 시작점 토글"
                       }
+                      onMouseEnter={() => onHoverStart?.(d.key, slot)}
+                      onMouseLeave={() => onHoverStart?.(d.key, null)}
+                      // hover가 애매한 환경 대비: 클릭 전에도 미리보기 세팅
+                      onMouseDown={() => onHoverStart?.(d.key, slot)}
+                      onClick={() => {
+                        onHoverStart?.(d.key, slot);
+                        onToggle(d.key, slot);
+                      }}
                     >
-                      {/* 텍스트 최소: 시작점은 ●, 경고는 ! */}
-                      {isStartSelected ? "●" : isWarnStart ? "!" : ""}
+                      {/* 시작점은 그대로 크게 */}
+                      {isStart ? "●" : ""}
+
+                      {/* ✅ 경고 시작점은 "우측 상단 배지"로 깔끔하게 */}
+                      {isWarn && !isStart && (
+                        <span
+                          style={{
+                            position: "absolute",
+                            top: 4,
+                            right: 6,
+                            fontSize: 12,
+                            lineHeight: "12px",
+                            padding: "3px 6px",
+                            borderRadius: 999,
+                            background: "rgba(255,153,0,0.12)",
+                            border: "1px solid rgba(255,153,0,0.35)",
+                            color: "rgba(130,80,0,0.95)",
+                            fontWeight: 700,
+                          }}
+                        >
+                          ⚠
+                        </span>
+                      )}
                     </td>
                   );
                 })}

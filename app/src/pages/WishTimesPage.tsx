@@ -1,10 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import type { Day, TimeBlock, OfferingAvailability } from "../domain/types";
 import { useAppStore } from "../domain/store";
 import AvailabilityGrid from "../ui/AvailabilityGrid";
 import UnavailabilityGrid from "../ui/UnavailabilityGrid";
 
-// ✅ 16:00 이후 선택 가능하도록 그리드 시간 확장
 const GRID_CONFIG = { startHour: 9, endHour: 22, slotMinutes: 60 };
 
 const DAYS: { key: Day; label: string }[] = [
@@ -36,7 +35,12 @@ function sortBlocks(a: TimeBlock, b: TimeBlock) {
   return a.startSlot - b.startSlot;
 }
 
-// ✅ 점심시간 요약
+function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
+  const aEnd = aStart + aLen;
+  const bEnd = bStart + bLen;
+  return aStart < bEnd && bStart < aEnd;
+}
+
 function formatLunchSummary(lunchRules: TimeBlock[], startHour: number) {
   if (!lunchRules || lunchRules.length === 0) return "설정 없음";
   const same = lunchRules.every(
@@ -54,12 +58,6 @@ function formatLunchSummary(lunchRules: TimeBlock[], startHour: number) {
     .join(" · ");
 }
 
-function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
-  const aEnd = aStart + aLen;
-  const bEnd = bStart + bLen;
-  return aStart < bEnd && bStart < aEnd;
-}
-
 export default function WishTimesPage() {
   const { input, setInput, maxGrade } = useAppStore();
   const inputAny = input as any;
@@ -68,16 +66,28 @@ export default function WishTimesPage() {
   const [selectedOfferingId, setSelectedOfferingId] = useState<string>("");
   const [selectedProfessorId, setSelectedProfessorId] = useState<string>("");
 
+  // 토스트 (안정화)
+  const [toast, setToast] = useState<string>("");
+  const toastTimerRef = useRef<number | null>(null);
+
+  function showToast(msg: string) {
+    setToast(msg);
+    if (toastTimerRef.current !== null) window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(""), 2400);
+  }
+
+  // hover 미리보기 시작점
+  const [hoverStart, setHoverStart] = useState<{ day: Day; slot: number } | null>(null);
+
   const offering = useMemo(() => {
     return input.offerings.find((o) => o.id === selectedOfferingId);
   }, [input.offerings, selectedOfferingId]);
 
-  // ✅ 점심시간 규칙
+  // 점심시간 규칙
   const lunchRules: TimeBlock[] = useMemo(() => {
     return (inputAny?.lunchRules ?? []) as TimeBlock[];
   }, [inputAny]);
 
-  // ✅ 점심시간 셀 표시(연노랑)
   const lunchCellSet = useMemo(() => {
     const s = new Set<string>();
     for (const b of lunchRules) {
@@ -88,15 +98,9 @@ export default function WishTimesPage() {
     return s;
   }, [lunchRules]);
 
-  const lunchSummary = useMemo(
-    () => formatLunchSummary(lunchRules, GRID_CONFIG.startHour),
-    [lunchRules]
-  );
+  const lunchSummary = useMemo(() => formatLunchSummary(lunchRules, GRID_CONFIG.startHour), [lunchRules]);
 
-  // ===== 과목별 희망시간 =====
-  const slotsPerHour = 60 / GRID_CONFIG.slotMinutes;
-  const totalSlots = (GRID_CONFIG.endHour - GRID_CONFIG.startHour) * slotsPerHour;
-
+  // 과목별 희망시간 저장값
   const currentAllowedBlocks = useMemo<TimeBlock[]>(() => {
     if (!selectedOfferingId) return [];
     return input.availability.find((a) => a.offeringId === selectedOfferingId)?.allowedBlocks ?? [];
@@ -108,99 +112,101 @@ export default function WishTimesPage() {
     return s;
   }, [currentAllowedBlocks]);
 
-  // ✅ “선택 불가 시작점”을 점심/국비만으로 만들되,
-  //    왜 막히는지(특히 3시간 과목이면 10~12도 막히는 이유)까지 툴팁 제공
-  const { disabledStartsSet, disabledReasonByStart } = useMemo(() => {
-    const disabled = new Set<string>();
-    const reason = new Map<string, string>();
-
-    if (!offering) return { disabledStartsSet: disabled, disabledReasonByStart: reason };
-
-    // 국비 학년 목록/오후 시작시각
-    const nationalGrades: number[] =
-      inputAny?.nationalProgramGrades ?? inputAny?.nationalGrades ?? [];
-    const isNational = Array.isArray(nationalGrades) && nationalGrades.includes(offering.grade);
-    const afternoonStartHour = inputAny?.nationalAfternoonStartHour ?? 13;
-    const afternoonStartSlot = Math.max(0, afternoonStartHour - GRID_CONFIG.startHour);
-
-    for (const d of DAYS) {
-      for (let startSlot = 0; startSlot < totalSlots; startSlot++) {
-        const key = `${d.key}-${startSlot}`;
-        const endSlot = startSlot + offering.slotLength;
-
-        // 1) 점심시간과 “수업 범위”가 겹치면 시작점 금지
-        const lunchToday = lunchRules.filter((r) => r.day === d.key);
-        for (const r of lunchToday) {
-          if (overlaps(startSlot, offering.slotLength, r.startSlot, r.slotLength)) {
-            disabled.add(key);
-
-            const clsS = slotToTime(GRID_CONFIG.startHour, startSlot);
-            const clsE = slotToTime(GRID_CONFIG.startHour, endSlot);
-            const lunchS = slotToTime(GRID_CONFIG.startHour, r.startSlot);
-            const lunchE = slotToTime(GRID_CONFIG.startHour, r.startSlot + r.slotLength);
-
-            reason.set(
-              key,
-              `선택 불가: ${offering.slotLength}시간 수업(${clsS}~${clsE})이 점심시간(${lunchS}~${lunchE})과 겹칩니다.`
-            );
-            break;
-          }
-        }
-
-        // 2) 국비 학년이면 오후 포함 시작점 금지(점심보다 우선 설명)
-        if (isNational) {
-          const touchesAfternoon = endSlot > afternoonStartSlot && startSlot < totalSlots;
-          if (touchesAfternoon) {
-            disabled.add(key);
-
-            const clsS = slotToTime(GRID_CONFIG.startHour, startSlot);
-            const clsE = slotToTime(GRID_CONFIG.startHour, endSlot);
-            const aft = slotToTime(GRID_CONFIG.startHour, afternoonStartSlot);
-
-            reason.set(
-              key,
-              `선택 불가: 국비교육 학년은 ${aft} 이후 수업이 제한됩니다. (${clsS}~${clsE} 포함)`
-            );
-          }
-        }
-      }
-    }
-
-    return { disabledStartsSet: disabled, disabledReasonByStart: reason };
-  }, [offering, lunchRules, inputAny, totalSlots]);
-
   function upsertAvailability(offeringId: string, allowedBlocks: TimeBlock[]) {
     const others = input.availability.filter((a) => a.offeringId !== offeringId);
     const row: OfferingAvailability = { offeringId, allowedBlocks };
     setInput({ availability: [...others, row] });
   }
 
+  // “침범 가능 시작점” 표시용
+  const warnStarts = useMemo(() => {
+    const s = new Set<string>();
+    if (!offering) return s;
+
+    const slotsPerHour = 60 / GRID_CONFIG.slotMinutes;
+    const totalSlots = (GRID_CONFIG.endHour - GRID_CONFIG.startHour) * slotsPerHour;
+
+    const nationalGrades: number[] =
+      inputAny?.nationalProgramGrades ?? inputAny?.nationalGrades ?? [];
+    const isNational = Array.isArray(nationalGrades) && nationalGrades.includes(offering.grade);
+
+    const afternoonStartHour = inputAny?.nationalAfternoonStartHour ?? 13;
+    const afternoonStartSlot = Math.max(0, afternoonStartHour - GRID_CONFIG.startHour);
+
+    for (const d of DAYS) {
+      for (let startSlot = 0; startSlot < totalSlots; startSlot++) {
+        const end = startSlot + offering.slotLength;
+
+        const lunchToday = lunchRules.filter((r) => r.day === d.key);
+        const hitsLunch = lunchToday.some((r) =>
+          overlaps(startSlot, offering.slotLength, r.startSlot, r.slotLength)
+        );
+
+        const hitsNational = isNational && end > afternoonStartSlot;
+
+        if (hitsLunch || hitsNational) s.add(`${d.key}-${startSlot}`);
+      }
+    }
+    return s;
+  }, [offering, lunchRules, inputAny]);
+
   function toggleAllowed(day: Day, startSlot: number) {
     if (!offering) return;
 
-    const key = `${day}-${startSlot}`;
-    if (disabledStartsSet.has(key)) return;
+    const block: TimeBlock = { day, startSlot, slotLength: offering.slotLength };
 
+    // 점심 침범 경고(막지 않음)
+    const lunchToday = lunchRules.filter((r) => r.day === day);
+    const hitLunch = lunchToday.find((r) =>
+      overlaps(block.startSlot, block.slotLength, r.startSlot, r.slotLength)
+    );
+    if (hitLunch) {
+      const clsS = slotToTime(GRID_CONFIG.startHour, block.startSlot);
+      const clsE = slotToTime(GRID_CONFIG.startHour, block.startSlot + block.slotLength);
+      const lS = slotToTime(GRID_CONFIG.startHour, hitLunch.startSlot);
+      const lE = slotToTime(GRID_CONFIG.startHour, hitLunch.startSlot + hitLunch.slotLength);
+      showToast(`⚠️ 점심시간(${lS}~${lE})을 침범합니다: 수업 ${clsS}~${clsE}`);
+    }
+
+    // 국비 오후 경고(막지 않음)
+    const nationalGrades: number[] =
+      inputAny?.nationalProgramGrades ?? inputAny?.nationalGrades ?? [];
+    const isNational = Array.isArray(nationalGrades) && nationalGrades.includes(offering.grade);
+    if (isNational) {
+      const afternoonStartHour = inputAny?.nationalAfternoonStartHour ?? 13;
+      const afternoonStartSlot = Math.max(0, afternoonStartHour - GRID_CONFIG.startHour);
+      if (block.startSlot + block.slotLength > afternoonStartSlot) {
+        const clsS = slotToTime(GRID_CONFIG.startHour, block.startSlot);
+        const clsE = slotToTime(GRID_CONFIG.startHour, block.startSlot + block.slotLength);
+        showToast(`⚠️ 국비교육 학년 오후 제한에 걸릴 수 있습니다: ${clsS}~${clsE}`);
+      }
+    }
+
+    // 토글 저장
     const next = [...currentAllowedBlocks];
     const idx = next.findIndex(
       (b) => b.day === day && b.startSlot === startSlot && b.slotLength === offering.slotLength
     );
 
     if (idx >= 0) next.splice(idx, 1);
-    else next.push({ day, startSlot, slotLength: offering.slotLength });
+    else next.push(block);
 
     upsertAvailability(offering.id, next);
   }
 
-  const sortedAllowedBlocks = useMemo(() => {
-    return [...currentAllowedBlocks].sort(sortBlocks);
-  }, [currentAllowedBlocks]);
+  // hoverStart가 있으면 그 시간부터 시수만큼 “연파랑 미리보기”
+  const previewBlock = useMemo(() => {
+    if (!offering || !hoverStart) return null;
+    return { day: hoverStart.day, startSlot: hoverStart.slot, slotLength: offering.slotLength } as TimeBlock;
+  }, [offering, hoverStart]);
 
-  const totalWishHours = useMemo(() => {
-    return sortedAllowedBlocks.reduce((sum, b) => sum + b.slotLength, 0);
-  }, [sortedAllowedBlocks]);
+  const sortedAllowedBlocks = useMemo(() => [...currentAllowedBlocks].sort(sortBlocks), [currentAllowedBlocks]);
+  const totalWishHours = useMemo(
+    () => sortedAllowedBlocks.reduce((sum, b) => sum + b.slotLength, 0),
+    [sortedAllowedBlocks]
+  );
 
-  // ===== 교수별 불가시간 =====
+  // 교수별 불가시간(기존 유지)
   const profBlocks = useMemo<TimeBlock[]>(() => {
     if (!selectedProfessorId) return [];
     return input.professorUnavailableRules.find((r) => r.professorId === selectedProfessorId)?.blocks ?? [];
@@ -230,19 +236,36 @@ export default function WishTimesPage() {
     upsertProfBlocks(selectedProfessorId, next);
   }
 
-  const sortedProfBlocks = useMemo(() => {
-    return [...profBlocks].sort(sortBlocks);
-  }, [profBlocks]);
-
-  const totalProfBlockedHours = useMemo(() => {
-    return sortedProfBlocks.reduce((sum, b) => sum + b.slotLength, 0);
-  }, [sortedProfBlocks]);
+  const totalProfBlockedHours = useMemo(
+    () => profBlocks.reduce((sum, b) => sum + b.slotLength, 0),
+    [profBlocks]
+  );
 
   return (
-    <div style={{ padding: 16 }}>
+    <div style={{ padding: 16, position: "relative" }}>
+      {/* 토스트 */}
+      {toast && (
+        <div
+          style={{
+            position: "fixed",
+            right: 18,
+            bottom: 18,
+            padding: "10px 12px",
+            borderRadius: 10,
+            border: "1px solid #eee",
+            background: "rgba(255,255,255,0.95)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.08)",
+            zIndex: 9999,
+            fontSize: 13,
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
         <h3 style={{ margin: 0 }}>희망시간</h3>
-        <div style={{ fontSize: 13, opacity: 0.8 }}>
+        <div style={{ fontSize: 13, opacity: 0.85 }}>
           점심시간: <b>{lunchSummary}</b>
         </div>
       </div>
@@ -254,9 +277,15 @@ export default function WishTimesPage() {
           <option value="PROF">교수별</option>
         </select>
 
-        <span style={{ opacity: 0.7 }}>
-          (연노랑=점심시간, 연파랑=희망시간 범위, ●=시작점, ×=제약으로 시작 불가)
+        <span style={{ opacity: 0.72 }}>
+          (연노랑=점심시간, 파랑=선택 범위, 연파랑=미리보기, ●=시작점, ⚠=침범 가능 시작점)
         </span>
+
+        {mode === "COURSE" && offering && (
+          <span style={{ marginLeft: "auto", fontSize: 12, opacity: 0.65 }}>
+            hover: {hoverStart ? `${hoverStart.day} ${slotToTime(GRID_CONFIG.startHour, hoverStart.slot)}` : "-"}
+          </span>
+        )}
       </div>
 
       {mode === "COURSE" ? (
@@ -279,9 +308,12 @@ export default function WishTimesPage() {
             </select>
 
             {offering && (
-              <span style={{ opacity: 0.8 }}>
-                선택 과목 시수: <b>{offering.slotLength}시간</b>
-              </span>
+              <>
+                <span style={{ opacity: 0.85 }}>
+                  선택 과목 시수: <b>{offering.slotLength}시간</b>
+                </span>
+                <button onClick={() => upsertAvailability(offering.id, [])}>희망시간 초기화</button>
+              </>
             )}
           </div>
 
@@ -291,7 +323,7 @@ export default function WishTimesPage() {
             <>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                 <h4 style={{ marginTop: 6 }}>{offering.grade}학년 그리드</h4>
-                <div style={{ opacity: 0.75, fontSize: 13 }}>
+                <div style={{ opacity: 0.8, fontSize: 13 }}>
                   총 선택 시수: <b>{totalWishHours}시간</b>{" "}
                   <span style={{ opacity: 0.75 }}>(= {offering.slotLength}시간 × {sortedAllowedBlocks.length}개)</span>
                 </div>
@@ -301,10 +333,14 @@ export default function WishTimesPage() {
                 config={GRID_CONFIG}
                 selectedBlocks={currentAllowedBlocks}
                 allowedStarts={allowedStartsSet}
-                disabledStarts={disabledStartsSet}
-                disabledReasonByStart={disabledReasonByStart}
                 markedCells={lunchCellSet}
                 markedCellLabel="점심시간"
+                warnStarts={warnStarts}
+                previewBlock={previewBlock}
+                onHoverStart={(day, slotOrNull) => {
+                  if (slotOrNull === null) setHoverStart(null);
+                  else setHoverStart({ day, slot: slotOrNull });
+                }}
                 onToggle={toggleAllowed}
               />
 
@@ -319,6 +355,9 @@ export default function WishTimesPage() {
                     ))}
                   </ul>
                 )}
+                <div style={{ marginTop: 8, fontSize: 12, opacity: 0.72 }}>
+                  ※ 점심시간을 침범해도 “희망시간 기록”은 가능하지만, 경고가 뜹니다.
+                </div>
               </div>
             </>
           )}
@@ -357,19 +396,6 @@ export default function WishTimesPage() {
                   <UnavailabilityGrid config={GRID_CONFIG} blocked={blockedSet} onToggle={toggleProfBlocked} />
                 </div>
               ))}
-
-              <div style={{ marginTop: 10, padding: 10, border: "1px solid #eee", borderRadius: 10, background: "#fafafa" }}>
-                <b>현재 선택된 교수 불가시간(시간 범위)</b>
-                {sortedProfBlocks.length === 0 ? (
-                  <div style={{ opacity: 0.7, marginTop: 6 }}>아직 불가시간이 없습니다.</div>
-                ) : (
-                  <ul style={{ marginTop: 8 }}>
-                    {sortedProfBlocks.map((b, i) => (
-                      <li key={i}>{formatBlock(GRID_CONFIG.startHour, b)}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
             </>
           )}
         </section>
