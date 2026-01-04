@@ -4,6 +4,7 @@ export type MajorType = "MAJOR" | "LIBERAL";
 export type Professor = {
   id: string;
   name: string;
+  targetHours: number; // ✅ 교수 목표 시수(채워야 하는 시수)
 };
 
 export type CourseOffering = {
