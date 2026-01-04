@@ -4,8 +4,7 @@ import { useAppStore } from "../domain/store";
 import AvailabilityGrid from "../ui/AvailabilityGrid";
 import UnavailabilityGrid from "../ui/UnavailabilityGrid";
 
-// ✅ 16시 이후 선택이 막히던 문제 해결: 그리드 자체 시간을 넓힘(09~22)
-// (현실적으로 야간수업까지 감안. 필요하면 23/24로도 올릴 수 있음)
+// ✅ 16:00 이후 선택 가능하도록 그리드 시간 확장
 const GRID_CONFIG = { startHour: 9, endHour: 22, slotMinutes: 60 };
 
 const DAYS: { key: Day; label: string }[] = [
@@ -19,7 +18,7 @@ const DAYS: { key: Day; label: string }[] = [
 const dayOrder: Record<Day, number> = { MON: 0, TUE: 1, WED: 2, THU: 3, FRI: 4 };
 
 function slotToTime(startHour: number, slot: number) {
-  const h = startHour + slot; // slotMinutes=60 기준
+  const h = startHour + slot;
   return `${String(h).padStart(2, "0")}:00`;
 }
 
@@ -37,10 +36,9 @@ function sortBlocks(a: TimeBlock, b: TimeBlock) {
   return a.startSlot - b.startSlot;
 }
 
-// ✅ 점심시간 요약 (초기설정 했는지 “보이는 증거”)
+// ✅ 점심시간 요약
 function formatLunchSummary(lunchRules: TimeBlock[], startHour: number) {
   if (!lunchRules || lunchRules.length === 0) return "설정 없음";
-  // 전부 같은 시간대면 월~금으로 묶기
   const same = lunchRules.every(
     (r) => r.startSlot === lunchRules[0].startSlot && r.slotLength === lunchRules[0].slotLength
   );
@@ -56,35 +54,10 @@ function formatLunchSummary(lunchRules: TimeBlock[], startHour: number) {
     .join(" · ");
 }
 
-// ✅ 특정 시작점(startSlot)에서 과목 시수만큼의 블록이 점심시간과 겹치면 금지
-function overlapsLunch(lunchRules: TimeBlock[], day: Day, startSlot: number, length: number) {
-  const end = startSlot + length;
-  const rules = lunchRules.filter((r) => r.day === day);
-  for (const r of rules) {
-    const rEnd = r.startSlot + r.slotLength;
-    const overlap = startSlot < rEnd && r.startSlot < end;
-    if (overlap) return true;
-  }
-  return false;
-}
-
-// ✅ 국비학년 오후 금지: 오후 시작 슬롯(기본 13:00) 이후를 포함하면 금지
-function violatesNationalAfternoon(grade: number, inputAny: any, startHour: number, startSlot: number, length: number) {
-  const nationalGrades: number[] = inputAny?.nationalProgramGrades ?? inputAny?.nationalGrades ?? [];
-  if (!Array.isArray(nationalGrades) || nationalGrades.length === 0) return false;
-  if (!nationalGrades.includes(grade)) return false;
-
-  const afternoonStartHour = inputAny?.nationalAfternoonStartHour ?? 13; // 기본 13시
-  const afternoonStartSlot = Math.max(0, afternoonStartHour - startHour);
-
-  const end = startSlot + length;
-  // 블록이 오후 시작 슬롯 이상을 "조금이라도" 포함하면 금지
-  return end > afternoonStartSlot && startSlot < totalSlotsGuard(startHour, inputAny); // 안전용
-}
-
-// 안전장치(타입 몰라도 터지는 것 방지)
-function totalSlotsGuard(startHour: number, inputAny: any) {
-  return Math.max(0, (inputAny?.endHour ?? 24) - startHour);
+function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
+  const aEnd = aStart + aLen;
+  const bEnd = bStart + bLen;
+  return aStart < bEnd && bStart < aEnd;
 }
 
 export default function WishTimesPage() {
@@ -99,12 +72,12 @@ export default function WishTimesPage() {
     return input.offerings.find((o) => o.id === selectedOfferingId);
   }, [input.offerings, selectedOfferingId]);
 
-  // ✅ 점심시간 규칙 가져오기
+  // ✅ 점심시간 규칙
   const lunchRules: TimeBlock[] = useMemo(() => {
     return (inputAny?.lunchRules ?? []) as TimeBlock[];
   }, [inputAny]);
 
-  // ✅ 점심시간 셀 표시용 Set(그리드에 연노랑)
+  // ✅ 점심시간 셀 표시(연노랑)
   const lunchCellSet = useMemo(() => {
     const s = new Set<string>();
     for (const b of lunchRules) {
@@ -115,6 +88,11 @@ export default function WishTimesPage() {
     return s;
   }, [lunchRules]);
 
+  const lunchSummary = useMemo(
+    () => formatLunchSummary(lunchRules, GRID_CONFIG.startHour),
+    [lunchRules]
+  );
+
   // ===== 과목별 희망시간 =====
   const slotsPerHour = 60 / GRID_CONFIG.slotMinutes;
   const totalSlots = (GRID_CONFIG.endHour - GRID_CONFIG.startHour) * slotsPerHour;
@@ -124,46 +102,72 @@ export default function WishTimesPage() {
     return input.availability.find((a) => a.offeringId === selectedOfferingId)?.allowedBlocks ?? [];
   }, [input.availability, selectedOfferingId]);
 
-  // ✅ 시작점 표시용 Set
   const allowedStartsSet = useMemo(() => {
     const s = new Set<string>();
     for (const b of currentAllowedBlocks) s.add(`${b.day}-${b.startSlot}`);
     return s;
   }, [currentAllowedBlocks]);
 
-  // ✅ “선택 불가 시작점”을 점심/국비만으로 구성
-  const disabledStartsSet = useMemo(() => {
-    const s = new Set<string>();
-    if (!offering) return s;
+  // ✅ “선택 불가 시작점”을 점심/국비만으로 만들되,
+  //    왜 막히는지(특히 3시간 과목이면 10~12도 막히는 이유)까지 툴팁 제공
+  const { disabledStartsSet, disabledReasonByStart } = useMemo(() => {
+    const disabled = new Set<string>();
+    const reason = new Map<string, string>();
 
-    // 1) 점심시간과 겹치는 시작점 금지
+    if (!offering) return { disabledStartsSet: disabled, disabledReasonByStart: reason };
+
+    // 국비 학년 목록/오후 시작시각
+    const nationalGrades: number[] =
+      inputAny?.nationalProgramGrades ?? inputAny?.nationalGrades ?? [];
+    const isNational = Array.isArray(nationalGrades) && nationalGrades.includes(offering.grade);
+    const afternoonStartHour = inputAny?.nationalAfternoonStartHour ?? 13;
+    const afternoonStartSlot = Math.max(0, afternoonStartHour - GRID_CONFIG.startHour);
+
     for (const d of DAYS) {
       for (let startSlot = 0; startSlot < totalSlots; startSlot++) {
-        if (overlapsLunch(lunchRules, d.key, startSlot, offering.slotLength)) {
-          s.add(`${d.key}-${startSlot}`);
+        const key = `${d.key}-${startSlot}`;
+        const endSlot = startSlot + offering.slotLength;
+
+        // 1) 점심시간과 “수업 범위”가 겹치면 시작점 금지
+        const lunchToday = lunchRules.filter((r) => r.day === d.key);
+        for (const r of lunchToday) {
+          if (overlaps(startSlot, offering.slotLength, r.startSlot, r.slotLength)) {
+            disabled.add(key);
+
+            const clsS = slotToTime(GRID_CONFIG.startHour, startSlot);
+            const clsE = slotToTime(GRID_CONFIG.startHour, endSlot);
+            const lunchS = slotToTime(GRID_CONFIG.startHour, r.startSlot);
+            const lunchE = slotToTime(GRID_CONFIG.startHour, r.startSlot + r.slotLength);
+
+            reason.set(
+              key,
+              `선택 불가: ${offering.slotLength}시간 수업(${clsS}~${clsE})이 점심시간(${lunchS}~${lunchE})과 겹칩니다.`
+            );
+            break;
+          }
+        }
+
+        // 2) 국비 학년이면 오후 포함 시작점 금지(점심보다 우선 설명)
+        if (isNational) {
+          const touchesAfternoon = endSlot > afternoonStartSlot && startSlot < totalSlots;
+          if (touchesAfternoon) {
+            disabled.add(key);
+
+            const clsS = slotToTime(GRID_CONFIG.startHour, startSlot);
+            const clsE = slotToTime(GRID_CONFIG.startHour, endSlot);
+            const aft = slotToTime(GRID_CONFIG.startHour, afternoonStartSlot);
+
+            reason.set(
+              key,
+              `선택 불가: 국비교육 학년은 ${aft} 이후 수업이 제한됩니다. (${clsS}~${clsE} 포함)`
+            );
+          }
         }
       }
     }
 
-    // 2) 국비교육 학년이면 오후 포함되는 시작점 금지
-    const nationalGrades: number[] = inputAny?.nationalProgramGrades ?? inputAny?.nationalGrades ?? [];
-    const isNational = Array.isArray(nationalGrades) && nationalGrades.includes(offering.grade);
-
-    if (isNational) {
-      const afternoonStartHour = inputAny?.nationalAfternoonStartHour ?? 13;
-      const afternoonStartSlot = Math.max(0, afternoonStartHour - GRID_CONFIG.startHour);
-
-      for (const d of DAYS) {
-        for (let startSlot = 0; startSlot < totalSlots; startSlot++) {
-          const end = startSlot + offering.slotLength;
-          const touchesAfternoon = end > afternoonStartSlot && startSlot < totalSlots;
-          if (touchesAfternoon) s.add(`${d.key}-${startSlot}`);
-        }
-      }
-    }
-
-    return s;
-  }, [offering, totalSlots, lunchRules, inputAny]);
+    return { disabledStartsSet: disabled, disabledReasonByStart: reason };
+  }, [offering, lunchRules, inputAny, totalSlots]);
 
   function upsertAvailability(offeringId: string, allowedBlocks: TimeBlock[]) {
     const others = input.availability.filter((a) => a.offeringId !== offeringId);
@@ -174,7 +178,6 @@ export default function WishTimesPage() {
   function toggleAllowed(day: Day, startSlot: number) {
     if (!offering) return;
 
-    // ✅ 금지 시작점이면 무시
     const key = `${day}-${startSlot}`;
     if (disabledStartsSet.has(key)) return;
 
@@ -235,8 +238,6 @@ export default function WishTimesPage() {
     return sortedProfBlocks.reduce((sum, b) => sum + b.slotLength, 0);
   }, [sortedProfBlocks]);
 
-  const lunchSummary = useMemo(() => formatLunchSummary(lunchRules, GRID_CONFIG.startHour), [lunchRules]);
-
   return (
     <div style={{ padding: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
@@ -254,7 +255,7 @@ export default function WishTimesPage() {
         </select>
 
         <span style={{ opacity: 0.7 }}>
-          (연노랑=점심시간, 연파랑=희망시간 범위, ●=시작점)
+          (연노랑=점심시간, 연파랑=희망시간 범위, ●=시작점, ×=제약으로 시작 불가)
         </span>
       </div>
 
@@ -301,6 +302,7 @@ export default function WishTimesPage() {
                 selectedBlocks={currentAllowedBlocks}
                 allowedStarts={allowedStartsSet}
                 disabledStarts={disabledStartsSet}
+                disabledReasonByStart={disabledReasonByStart}
                 markedCells={lunchCellSet}
                 markedCellLabel="점심시간"
                 onToggle={toggleAllowed}
@@ -317,10 +319,6 @@ export default function WishTimesPage() {
                     ))}
                   </ul>
                 )}
-              </div>
-
-              <div style={{ marginTop: 10, fontSize: 12, opacity: 0.75 }}>
-                ※ 선택 불가 영역은 <b>점심시간</b> 또는 <b>국비교육 학년 오후 제한</b> 때문에 막힌 것입니다.
               </div>
             </>
           )}

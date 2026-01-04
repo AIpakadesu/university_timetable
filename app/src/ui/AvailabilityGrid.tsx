@@ -22,21 +22,34 @@ function slotToTime(config: GridConfig, slot: number) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
+function blockCellsSet(block: TimeBlock | null) {
+  const s = new Set<string>();
+  if (!block) return s;
+  for (let t = block.startSlot; t < block.startSlot + block.slotLength; t++) {
+    s.add(`${block.day}-${t}`);
+  }
+  return s;
+}
+
 export default function AvailabilityGrid(props: {
   config: GridConfig;
 
-  // ✅ 선택된 희망시간(블록 단위) - 시수만큼 범위 색칠에 사용
+  // ✅ 저장된 희망시간(블록 단위): 시수만큼 범위 색칠
   selectedBlocks: TimeBlock[];
 
-  // ✅ 시작점(클릭 가능한 “시작시간” 셀) 표시용
+  // ✅ 시작점 표시용(●)
   allowedStarts: Set<string>;
 
-  // ✅ “선택 불가 시작점” (점심/국비 등으로 인해 금지)
-  disabledStarts: Set<string>;
-
-  // ✅ 그리드에 “보조 표시” (ex. 점심시간 셀)
+  // ✅ 점심시간 같은 보조 표시(연노랑)
   markedCells?: Set<string>;
   markedCellLabel?: string;
+
+  // ✅ 경고(점심/국비 침범 가능) 시작점 표시용(⚠︎)
+  warnStarts?: Set<string>;
+
+  // ✅ 마우스 오버 시 “이 시작점이면 어디까지 먹는지” 미리보기
+  previewBlock?: TimeBlock | null;
+  onHoverStart?: (day: Day, startSlot: number | null) => void;
 
   onToggle: (day: Day, startSlot: number) => void;
 }) {
@@ -44,22 +57,27 @@ export default function AvailabilityGrid(props: {
     config,
     selectedBlocks,
     allowedStarts,
-    disabledStarts,
     markedCells = new Set<string>(),
     markedCellLabel = "점심시간",
+    warnStarts = new Set<string>(),
+    previewBlock = null,
+    onHoverStart,
     onToggle,
   } = props;
 
   const slotsPerHour = 60 / config.slotMinutes;
   const totalSlots = (config.endHour - config.startHour) * slotsPerHour;
 
-  // ✅ 블록 범위(시수만큼) 칠하기용 Set
-  const filledCells = new Set<string>();
+  // ✅ 선택된 블록 범위(파란색)
+  const selectedFilled = new Set<string>();
   for (const b of selectedBlocks) {
-    for (let s = b.startSlot; s < b.startSlot + b.slotLength; s++) {
-      filledCells.add(`${b.day}-${s}`);
+    for (let t = b.startSlot; t < b.startSlot + b.slotLength; t++) {
+      selectedFilled.add(`${b.day}-${t}`);
     }
   }
+
+  // ✅ 미리보기 블록 범위(연한 파란색)
+  const previewFilled = blockCellsSet(previewBlock);
 
   return (
     <div style={{ overflow: "auto", border: "1px solid #eee", borderRadius: 10 }}>
@@ -107,6 +125,7 @@ export default function AvailabilityGrid(props: {
                     width: 80,
                     color: "#555",
                     background: "white",
+                    userSelect: "none",
                   }}
                 >
                   {timeLabel}
@@ -115,54 +134,62 @@ export default function AvailabilityGrid(props: {
                 {DAYS.map((d) => {
                   const key = `${d.key}-${slot}`;
 
+                  const isLunch = markedCells.has(key);
+                  const isSelected = selectedFilled.has(key);
+                  const isPreview = previewFilled.has(key);
+
                   const isStartSelected = allowedStarts.has(key);
-                  const isDisabledStart = disabledStarts.has(key);
+                  const isWarnStart = warnStarts.has(key);
 
-                  // ✅ 시수만큼 칠해지는 “범위 색”
-                  const isFilled = filledCells.has(key);
-
-                  // ✅ 점심시간 같은 “보조 표시”
-                  const isMarked = markedCells.has(key);
-
-                  // 배경 우선순위: 금지(시작점) > 점심표시 > 선택범위 > 기본
+                  // ✅ 배경: 점심(노랑)은 “항상” 보이게.
+                  // 선택/미리보기는 파란색으로 범위가 보이게 하되,
+                  // 점심과 겹치면 노랑을 유지 + 파란 라인(표시)만 추가해서 둘 다 보이게 처리.
                   let bg = "white";
-                  if (isMarked) bg = "#fff7d6"; // 점심시간 느낌(연노랑)
-                  if (isFilled) bg = "#e9f6ff"; // 희망시간 범위(연파랑)
-                  if (isMarked && isFilled) bg = "#e6f7e6"; // 둘 겹치면(원래 선택 못 하게 막을 거라 거의 안 나옴)
-                  if (isDisabledStart) bg = "#f3f3f3";
+                  if (isLunch) bg = "#fff7d6";
+                  if (!isLunch && isPreview) bg = "#f0f8ff"; // 미리보기(연한 파랑)
+                  if (!isLunch && isSelected) bg = "#e9f6ff"; // 선택(파랑)
 
-                  const cursor = isDisabledStart ? "not-allowed" : "pointer";
+                  // 점심 + (미리보기/선택) 겹침 표시용 라인
+                  const showBlueLine = isLunch && (isPreview || isSelected);
+                  const lineColor = isSelected ? "rgba(40,120,255,0.55)" : "rgba(40,120,255,0.30)";
 
                   return (
                     <td
                       key={d.key}
-                      onClick={() => {
-                        if (isDisabledStart) return;
-                        onToggle(d.key, slot);
-                      }}
+                      onMouseEnter={() => onHoverStart?.(d.key, slot)}
+                      onMouseLeave={() => onHoverStart?.(d.key, null)}
+                      onClick={() => onToggle(d.key, slot)}
                       style={{
                         borderBottom: "1px solid #f0f0f0",
                         borderLeft: "1px solid #f5f5f5",
                         padding: "6px 8px",
-                        cursor,
+                        cursor: "pointer",
                         userSelect: "none",
                         background: bg,
 
-                        // ✅ 시작점은 더 진하게 표시(“여기가 시작!”)
-                        outline: isStartSelected ? "2px solid rgba(0,0,0,0.22)" : "none",
+                        // 시작점 시각화
+                        outline: isStartSelected
+                          ? "2px solid rgba(0,0,0,0.22)"
+                          : isWarnStart
+                          ? "2px solid rgba(255,140,0,0.35)"
+                          : "none",
+
                         fontWeight: isStartSelected ? 700 : 400,
-                        color: isDisabledStart ? "#999" : "#222",
+                        color: "#222",
+
+                        // 점심과 겹치면 파란 라인으로 “이 범위가 점심을 침범함”을 시각적으로 표시
+                        boxShadow: showBlueLine ? `inset 0 0 0 2px ${lineColor}` : "none",
                       }}
                       title={
-                        isDisabledStart
-                          ? "선택 불가(점심/국비 제약)"
-                          : isMarked
+                        isLunch
                           ? markedCellLabel
+                          : isWarnStart
+                          ? "주의: 점심/국비 제약을 침범할 수 있음 (클릭 시 경고)"
                           : "클릭: 희망시간 시작점 토글"
                       }
                     >
-                      {/* 셀 안 글자 최소화: 시작점만 점 표시 */}
-                      {isStartSelected ? "●" : ""}
+                      {/* 텍스트 최소: 시작점은 ●, 경고는 ! */}
+                      {isStartSelected ? "●" : isWarnStart ? "!" : ""}
                     </td>
                   );
                 })}
