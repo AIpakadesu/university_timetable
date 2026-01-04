@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import type { MouseEvent } from "react";
 import type { Assignment, Day, TimeBlock, Conflict } from "../domain/types";
 import { useAppStore } from "../domain/store";
 import TimetableGrid from "../ui/TimetableGrid";
@@ -15,12 +16,13 @@ function overlaps(aStart: number, aLen: number, bStart: number, bLen: number) {
 
 // ✅ 여기 걸리면 "배치 자체"를 막습니다(점심/국비/교양/교수불가/희망시간대 위반)
 function hasHardConflict(conflicts: Conflict[]) {
-  return conflicts.some((c) =>
-    c.code === "LUNCH_BLOCKED" ||
-    c.code === "OFFERING_UNAVAILABLE" ||
-    c.code === "GRADE_AFTERNOON_BLOCKED" ||
-    c.code === "MAJOR_BLOCKED_FOR_LIBERAL_DAY" ||
-    c.code === "PROF_UNAVAILABLE"
+  return conflicts.some(
+    (c) =>
+      c.code === "LUNCH_BLOCKED" ||
+      c.code === "OFFERING_UNAVAILABLE" ||
+      c.code === "GRADE_AFTERNOON_BLOCKED" ||
+      c.code === "MAJOR_BLOCKED_FOR_LIBERAL_DAY" ||
+      c.code === "PROF_UNAVAILABLE"
   );
 }
 
@@ -41,10 +43,18 @@ export default function PlannerPage() {
     alternatives: TimeBlock[];
   }>({ conflicts: [], alternatives: [] });
 
-  const offeringMap = useMemo(() => new Map(input.offerings.map((o) => [o.id, o])), [input.offerings]);
-  const profMap = useMemo(() => new Map(input.professors.map((p) => [p.id, p])), [input.professors]);
+  const offeringMap = useMemo(
+    () => new Map(input.offerings.map((o) => [o.id, o])),
+    [input.offerings]
+  );
+  const profMap = useMemo(
+    () => new Map(input.professors.map((p) => [p.id, p])),
+    [input.professors]
+  );
 
-  const selectedOffering = selectedOfferingId ? offeringMap.get(selectedOfferingId) : undefined;
+  const selectedOffering = selectedOfferingId
+    ? offeringMap.get(selectedOfferingId)
+    : undefined;
 
   // ✅ 학년별 빨간 셀(충돌 표시)
   const redCellsByGrade = useMemo(() => {
@@ -58,12 +68,10 @@ export default function PlannerPage() {
     for (const a of draftAssignments) {
       const conflicts = checkConflictsForPlacement(input, current, a);
 
-      // ✅ 배치된 결과가 충돌이면 표시(학년/교수 겹침은 빨갛게 보여주기)
       if (conflicts.length > 0) {
         const off = offeringMap.get(a.offeringId);
         const g = off?.grade;
 
-        // 배치 자체를 막는 제약은 원래 배치가 안 되므로(정상) 여기선 주로 겹침 빨간표시용
         if (g && m.has(g)) {
           for (let s = a.block.startSlot; s < a.block.startSlot + a.block.slotLength; s++) {
             m.get(g)!.add(`${a.block.day}-${s}`);
@@ -83,6 +91,7 @@ export default function PlannerPage() {
           }
         }
       }
+
       current.push(a);
     }
 
@@ -91,13 +100,21 @@ export default function PlannerPage() {
 
   function inspectPlacement(grade: number, day: Day, slot: number) {
     if (!selectedOfferingId) {
-      setInspect({ target: { grade, day, slot }, conflicts: ["선택된 과목이 없습니다."], alternatives: [] });
+      setInspect({
+        target: { grade, day, slot },
+        conflicts: ["선택된 과목이 없습니다."],
+        alternatives: [],
+      });
       return;
     }
 
     const off = offeringMap.get(selectedOfferingId);
     if (!off) {
-      setInspect({ target: { grade, day, slot }, conflicts: ["선택 과목 정보를 찾을 수 없습니다."], alternatives: [] });
+      setInspect({
+        target: { grade, day, slot },
+        conflicts: ["선택 과목 정보를 찾을 수 없습니다."],
+        alternatives: [],
+      });
       return;
     }
 
@@ -167,11 +184,16 @@ export default function PlannerPage() {
       return;
     }
 
-    // ✅ 겹침(학년/교수 충돌)은 배치 허용 + 빨강으로 표시되도록 놔둠
+    // ✅ 겹침(학년/교수 충돌)은 배치 허용 + 빨강으로 표시
     placeDraft(next);
   }
 
-  function onCellClickWithGrade(grade: number, day: Day, slot: number, e: React.MouseEvent<HTMLTableCellElement>) {
+  function onCellClickWithGrade(
+    grade: number,
+    day: Day,
+    slot: number,
+    e: MouseEvent<HTMLTableCellElement>
+  ) {
     const deleteMode = e.altKey;
 
     const hits = draftAssignments.filter((a) => {
@@ -208,6 +230,7 @@ export default function PlannerPage() {
     const current = draftAssignments.filter((a) => a.offeringId !== selectedOfferingId);
     const next: Assignment = { offeringId: selectedOfferingId, block: b };
     const conflicts = checkConflictsForPlacement(input, current, next);
+
     if (hasHardConflict(conflicts)) {
       setInspect({
         target: { grade, day: b.day, slot: b.startSlot },
@@ -236,7 +259,9 @@ export default function PlannerPage() {
           <b>작업 학년:</b>
           <select value={gradeFilter} onChange={(e) => setGradeFilter(Number(e.target.value))} style={{ padding: 6 }}>
             {gradeOptions.map((g) => (
-              <option key={g} value={g}>{g}학년</option>
+              <option key={g} value={g}>
+                {g}학년
+              </option>
             ))}
           </select>
         </div>
@@ -262,9 +287,7 @@ export default function PlannerPage() {
           </select>
         </div>
 
-        <span style={{ opacity: 0.7 }}>
-          클릭: 배치 / ⌥Option+클릭: 삭제
-        </span>
+        <span style={{ opacity: 0.7 }}>클릭: 배치 / ⌥Option+클릭: 삭제</span>
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 14, alignItems: "start" }}>
@@ -273,14 +296,29 @@ export default function PlannerPage() {
             const gradeAssignments = draftAssignments.filter((a) => offeringMap.get(a.offeringId)?.grade === g);
             const redCells = redCellsByGrade.get(g) ?? new Set<string>();
 
+            // ✅ 선택 과목이 있을 때, 학년이 다른 그리드는 비활성 처리
+            const isDisabledGrid = !!selectedOffering && selectedOffering.grade !== g;
+
             return (
               <div key={g}>
-                <h4 style={{ margin: "6px 0" }}>{g}학년 시간표</h4>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                  <h4 style={{ margin: "6px 0", opacity: isDisabledGrid ? 0.65 : 1 }}>
+                    {g}학년 시간표
+                  </h4>
+
+                  {isDisabledGrid && selectedOffering && (
+                    <span style={{ fontSize: 12, opacity: 0.7 }}>
+                      선택 과목: {selectedOffering.grade}학년 → 이 그리드는 배치 불가
+                    </span>
+                  )}
+                </div>
+
                 <TimetableGrid
                   input={input}
                   config={GRID_CONFIG}
                   assignments={gradeAssignments}
                   redCells={redCells}
+                  disabled={isDisabledGrid} // ✅ 회색/클릭불가
                   onCellClick={(day, slot, e) => onCellClickWithGrade(g, day, slot, e)}
                 />
               </div>
@@ -306,7 +344,9 @@ export default function PlannerPage() {
                     <li style={{ color: "green" }}>배치 가능 ✅</li>
                   ) : (
                     inspect.conflicts.map((m, i) => (
-                      <li key={i} style={{ color: "#b00" }}>{m}</li>
+                      <li key={i} style={{ color: "#b00" }}>
+                        {m}
+                      </li>
                     ))
                   )}
                 </ul>
@@ -315,9 +355,7 @@ export default function PlannerPage() {
               <div>
                 <b>대체 시작시간 추천:</b>
                 {inspect.alternatives.length === 0 ? (
-                  <div style={{ opacity: 0.7, marginTop: 6 }}>
-                    추천 가능한 대체 시간이 없습니다.
-                  </div>
+                  <div style={{ opacity: 0.7, marginTop: 6 }}>추천 가능한 대체 시간이 없습니다.</div>
                 ) : (
                   <ul style={{ marginTop: 6 }}>
                     {inspect.alternatives.map((b, i) => (

@@ -12,6 +12,40 @@ const DAYS: { key: Day; label: string }[] = [
   { key: "FRI", label: "금" },
 ];
 
+function dayLabel(day: Day) {
+  return ({ MON: "월", TUE: "화", WED: "수", THU: "목", FRI: "금" } as const)[day];
+}
+
+function slotToTime(startHour: number, slot: number) {
+  const h = startHour + slot; // slotMinutes=60 기준
+  return `${String(h).padStart(2, "0")}:00`;
+}
+
+function formatLunchRules(rules: TimeBlock[], startHour = 9) {
+  if (!rules || rules.length === 0) return "설정 없음";
+
+  // 월~금이 같은 시간으로 통일돼 있으면 한 줄로
+  const same =
+    rules.every((r) => r.startSlot === rules[0].startSlot && r.slotLength === rules[0].slotLength);
+
+  if (same && rules.length >= 3) {
+    const s = slotToTime(startHour, rules[0].startSlot);
+    const e = slotToTime(startHour, rules[0].startSlot + rules[0].slotLength);
+    return `월~금 ${s}~${e} (${rules[0].slotLength}시간)`;
+  }
+
+  // 아니면 요일별로 나열
+  return rules
+    .slice()
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .map((r) => {
+      const s = slotToTime(startHour, r.startSlot);
+      const e = slotToTime(startHour, r.startSlot + r.slotLength);
+      return `${dayLabel(r.day)} ${s}~${e}`;
+    })
+    .join(" · ");
+}
+
 function hourToSlot(hour: number) {
   return hour - GRID_START_HOUR;
 }
@@ -150,9 +184,37 @@ export default function InitialSetupPage() {
           <button disabled={!unlocked} onClick={() => setInput({ lunchRules: [] })}>점심시간 제거</button>
         </div>
 
-        <pre style={{ background: "#f5f5f5", padding: 10, borderRadius: 8, marginTop: 8 }}>
-          {JSON.stringify(input.lunchRules, null, 2)}
-        </pre>
+        <div style={{ marginTop: 10 }}>
+  <div
+    style={{
+      padding: "10px 12px",
+      border: "1px solid #eee",
+      borderRadius: 10,
+      background: "#fafafa",
+      display: "flex",
+      justifyContent: "space-between",
+      gap: 12,
+      alignItems: "center",
+      flexWrap: "wrap",
+    }}
+  >
+    <div>
+      <b>현재 점심시간:</b>{" "}
+      <span style={{ opacity: 0.85 }}>{formatLunchRules(input.lunchRules, GRID_START_HOUR)}</span>
+    </div>
+
+    <div style={{ opacity: 0.6, fontSize: 12 }}>
+      (필요하면 아래에서 자세히 보기)
+    </div>
+  </div>
+
+  <details style={{ marginTop: 8 }}>
+    <summary style={{ cursor: "pointer", opacity: 0.8 }}>자세히 보기(디버깅)</summary>
+    <pre style={{ background: "#f5f5f5", padding: 10, borderRadius: 8, marginTop: 8 }}>
+      {JSON.stringify(input.lunchRules, null, 2)}
+    </pre>
+  </details>
+</div>
       </section>
 
       <section style={{ marginBottom: 18, opacity: unlocked ? 1 : 0.6 }}>
