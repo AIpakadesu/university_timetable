@@ -24,7 +24,6 @@ function slotToTime(startHour: number, slot: number) {
 function formatLunchRules(rules: TimeBlock[], startHour = 9) {
   if (!rules || rules.length === 0) return "설정 없음";
 
-  // 월~금이 같은 시간으로 통일돼 있으면 한 줄로
   const same =
     rules.every((r) => r.startSlot === rules[0].startSlot && r.slotLength === rules[0].slotLength);
 
@@ -34,7 +33,6 @@ function formatLunchRules(rules: TimeBlock[], startHour = 9) {
     return `월~금 ${s}~${e} (${rules[0].slotLength}시간)`;
   }
 
-  // 아니면 요일별로 나열
   return rules
     .slice()
     .sort((a, b) => a.day.localeCompare(b.day))
@@ -105,23 +103,20 @@ export default function InitialSetupPage() {
   function deleteProfessor(professorId: string) {
     if (!unlocked) return;
 
-    // 해당 교수가 담당인 과목도 같이 삭제
     const nextOfferings = input.offerings.filter((o) => o.professorId !== professorId);
     const nextProfessors = input.professors.filter((p) => p.id !== professorId);
 
-    // availability도 같이 정리
     const offeringIds = new Set(nextOfferings.map((o) => o.id));
     const nextAvailability = input.availability.filter((a) => offeringIds.has(a.offeringId));
 
     setInput({ professors: nextProfessors, offerings: nextOfferings, availability: nextAvailability });
 
-    // ✅ 삭제한 교수가 선택되어 있었으면 선택값도 정리
     if (newProfessorId === professorId) {
       setNewProfessorId(nextProfessors[0]?.id ?? "");
     }
   }
 
-  // ✅ 삭제 확인 팝업(연쇄 삭제 안내 + 예시 리스트)
+  // ✅ 교수 삭제 확인 팝업
   function requestDeleteProfessor(professorId: string) {
     if (!unlocked) return;
 
@@ -174,12 +169,40 @@ export default function InitialSetupPage() {
     });
   }
 
+  // ✅ 실제 과목 삭제(희망시간 연쇄삭제 포함)
   function deleteOffering(offeringId: string) {
     if (!unlocked) return;
     setInput({
       offerings: input.offerings.filter((o) => o.id !== offeringId),
       availability: input.availability.filter((a) => a.offeringId !== offeringId),
     });
+  }
+
+  // ✅ 과목 삭제 확인 팝업(희망시간 연쇄 삭제 안내 포함)
+  function requestDeleteOffering(offeringId: string) {
+    if (!unlocked) return;
+
+    const o = input.offerings.find((x) => x.id === offeringId);
+    if (!o) return;
+
+    const profName = input.professors.find((p) => p.id === o.professorId)?.name ?? "교수?";
+    const availEntries = input.availability.filter((a) => a.offeringId === offeringId).length;
+
+    const msg =
+      `과목 "${o.courseName}"을(를) 삭제하시겠습니까?\n\n` +
+      `정보\n` +
+      `- 학년: ${o.grade}학년\n` +
+      `- 담당교수: ${profName}\n` +
+      `- 구분: ${o.majorType === "MAJOR" ? "전공" : "교양"}\n` +
+      `- 시수: ${o.slotLength}시간\n\n` +
+      `⚠️ 함께 삭제되는 항목\n` +
+      `- 해당 과목의 희망시간(availability) 설정: ${availEntries}개 항목\n\n` +
+      `진행할까요?`;
+
+    const ok = window.confirm(msg);
+    if (!ok) return;
+
+    deleteOffering(offeringId);
   }
 
   return (
@@ -269,7 +292,6 @@ export default function InitialSetupPage() {
               <b>현재 점심시간:</b>{" "}
               <span style={{ opacity: 0.85 }}>{formatLunchRules(input.lunchRules, GRID_START_HOUR)}</span>
             </div>
-
             <div style={{ opacity: 0.6, fontSize: 12 }}>(필요하면 아래에서 자세히 보기)</div>
           </div>
 
@@ -426,7 +448,6 @@ export default function InitialSetupPage() {
                   disabled={!unlocked}
                   onChange={(e) => updateProfessorName(p.id, e.target.value)}
                   onBlur={(e) => {
-                    // 공백 정리 + 빈 값 방지
                     const v = e.target.value.trim();
                     if (!unlocked) return;
                     if (v === "") updateProfessorName(p.id, `교수${idx + 1}`);
@@ -445,7 +466,6 @@ export default function InitialSetupPage() {
 
                 <span style={{ opacity: 0.55, fontSize: 12 }}>{p.id}</span>
 
-                {/* ✅ 여기! deleteProfessor -> requestDeleteProfessor */}
                 <button disabled={!unlocked} onClick={() => requestDeleteProfessor(p.id)}>
                   삭제
                 </button>
@@ -547,7 +567,9 @@ export default function InitialSetupPage() {
                     {input.professors.find((p) => p.id === o.professorId)?.name ?? "교수?"}
                   </span>
                   <span style={{ opacity: 0.6 }}>{o.id}</span>
-                  <button disabled={!unlocked} onClick={() => deleteOffering(o.id)}>
+
+                  {/* ✅ 여기! deleteOffering -> requestDeleteOffering */}
+                  <button disabled={!unlocked} onClick={() => requestDeleteOffering(o.id)}>
                     삭제
                   </button>
                 </li>
