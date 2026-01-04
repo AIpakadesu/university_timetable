@@ -92,15 +92,30 @@ export default function InitialSetupPage() {
     if (!newProfessorId) setNewProfessorId(id);
   }
 
+  // ✅ 교수 이름 수정
+  function updateProfessorName(professorId: string, name: string) {
+    if (!unlocked) return;
+    const next = input.professors.map((p) => (p.id === professorId ? { ...p, name } : p));
+    setInput({ professors: next });
+  }
+
   function deleteProfessor(professorId: string) {
     if (!unlocked) return;
+
     // 해당 교수가 담당인 과목도 같이 삭제
     const nextOfferings = input.offerings.filter((o) => o.professorId !== professorId);
     const nextProfessors = input.professors.filter((p) => p.id !== professorId);
+
     // availability도 같이 정리
-    const offeringIds = new Set(nextOfferings.map(o => o.id));
-    const nextAvailability = input.availability.filter(a => offeringIds.has(a.offeringId));
+    const offeringIds = new Set(nextOfferings.map((o) => o.id));
+    const nextAvailability = input.availability.filter((a) => offeringIds.has(a.offeringId));
+
     setInput({ professors: nextProfessors, offerings: nextOfferings, availability: nextAvailability });
+
+    // ✅ 삭제한 교수가 선택되어 있었으면 선택값도 정리
+    if (newProfessorId === professorId) {
+      setNewProfessorId(nextProfessors[0]?.id ?? "");
+    }
   }
 
   function addOffering() {
@@ -164,57 +179,73 @@ export default function InitialSetupPage() {
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <label>
             시작:
-            <select disabled={!unlocked} value={lunchStartHour} onChange={(e) => setLunchStartHour(Number(e.target.value))} style={{ marginLeft: 6, padding: 6 }}>
+            <select
+              disabled={!unlocked}
+              value={lunchStartHour}
+              onChange={(e) => setLunchStartHour(Number(e.target.value))}
+              style={{ marginLeft: 6, padding: 6 }}
+            >
               {[10, 11, 12, 13, 14].map((h) => (
-                <option key={h} value={h}>{h}:00</option>
+                <option key={h} value={h}>
+                  {h}:00
+                </option>
               ))}
             </select>
           </label>
 
           <label>
             길이:
-            <select disabled={!unlocked} value={lunchLen} onChange={(e) => setLunchLen(Number(e.target.value))} style={{ marginLeft: 6, padding: 6 }}>
+            <select
+              disabled={!unlocked}
+              value={lunchLen}
+              onChange={(e) => setLunchLen(Number(e.target.value))}
+              style={{ marginLeft: 6, padding: 6 }}
+            >
               {[1, 2].map((x) => (
-                <option key={x} value={x}>{x}시간</option>
+                <option key={x} value={x}>
+                  {x}시간
+                </option>
               ))}
             </select>
           </label>
 
-          <button disabled={!unlocked} onClick={applyLunchToWeekdays}>월~금 적용</button>
-          <button disabled={!unlocked} onClick={() => setInput({ lunchRules: [] })}>점심시간 제거</button>
+          <button disabled={!unlocked} onClick={applyLunchToWeekdays}>
+            월~금 적용
+          </button>
+          <button disabled={!unlocked} onClick={() => setInput({ lunchRules: [] })}>
+            점심시간 제거
+          </button>
         </div>
 
         <div style={{ marginTop: 10 }}>
-  <div
-    style={{
-      padding: "10px 12px",
-      border: "1px solid #eee",
-      borderRadius: 10,
-      background: "#fafafa",
-      display: "flex",
-      justifyContent: "space-between",
-      gap: 12,
-      alignItems: "center",
-      flexWrap: "wrap",
-    }}
-  >
-    <div>
-      <b>현재 점심시간:</b>{" "}
-      <span style={{ opacity: 0.85 }}>{formatLunchRules(input.lunchRules, GRID_START_HOUR)}</span>
-    </div>
+          <div
+            style={{
+              padding: "10px 12px",
+              border: "1px solid #eee",
+              borderRadius: 10,
+              background: "#fafafa",
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "center",
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              <b>현재 점심시간:</b>{" "}
+              <span style={{ opacity: 0.85 }}>{formatLunchRules(input.lunchRules, GRID_START_HOUR)}</span>
+            </div>
 
-    <div style={{ opacity: 0.6, fontSize: 12 }}>
-      (필요하면 아래에서 자세히 보기)
-    </div>
-  </div>
+            <div style={{ opacity: 0.6, fontSize: 12 }}>(필요하면 아래에서 자세히 보기)</div>
+          </div>
 
-  <details style={{ marginTop: 8 }}>
-    <summary style={{ cursor: "pointer", opacity: 0.8 }}>자세히 보기(디버깅)</summary>
-    <pre style={{ background: "#f5f5f5", padding: 10, borderRadius: 8, marginTop: 8 }}>
-      {JSON.stringify(input.lunchRules, null, 2)}
-    </pre>
-  </details>
-</div>
+          <details style={{ marginTop: 8 }}>
+            <summary style={{ cursor: "pointer", opacity: 0.8 }}>자세히 보기(디버깅)</summary>
+            <pre style={{ background: "#f5f5f5", padding: 10, borderRadius: 8, marginTop: 8 }}>
+              {JSON.stringify(input.lunchRules, null, 2)}
+            </pre>
+          </details>
+        </div>
       </section>
 
       <section style={{ marginBottom: 18, opacity: unlocked ? 1 : 0.6 }}>
@@ -226,14 +257,19 @@ export default function InitialSetupPage() {
           >
             예시 추가(2학년 13시부터 불가)
           </button>
-          <button disabled={!unlocked} onClick={() => setInput({ govtTrainingRules: [] })}>초기화</button>
+          <button disabled={!unlocked} onClick={() => setInput({ govtTrainingRules: [] })}>
+            초기화
+          </button>
         </div>
 
         <ul>
           {input.govtTrainingRules.map((r, idx) => (
             <li key={idx} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
               <b>{r.grade}학년</b> afternoonStartSlot={r.afternoonStartSlot}
-              <button disabled={!unlocked} onClick={() => setInput({ govtTrainingRules: input.govtTrainingRules.filter((_, i) => i !== idx) })}>
+              <button
+                disabled={!unlocked}
+                onClick={() => setInput({ govtTrainingRules: input.govtTrainingRules.filter((_, i) => i !== idx) })}
+              >
                 삭제
               </button>
             </li>
@@ -250,7 +286,9 @@ export default function InitialSetupPage() {
           >
             예시 추가(수요일 09~18 전공 불가)
           </button>
-          <button disabled={!unlocked} onClick={() => setInput({ majorBlockedRules: [] })}>초기화</button>
+          <button disabled={!unlocked} onClick={() => setInput({ majorBlockedRules: [] })}>
+            초기화
+          </button>
         </div>
 
         <ul>
@@ -264,7 +302,11 @@ export default function InitialSetupPage() {
                   setInput({ majorBlockedRules: input.majorBlockedRules.map((x, i) => (i === idx ? { ...x, day } : x)) });
                 }}
               >
-                {DAYS.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+                {DAYS.map((d) => (
+                  <option key={d.key} value={d.key}>
+                    {d.label}
+                  </option>
+                ))}
               </select>
               startSlot:
               <input
@@ -288,7 +330,12 @@ export default function InitialSetupPage() {
                 }}
                 style={{ width: 70 }}
               />
-              <button disabled={!unlocked} onClick={() => setInput({ majorBlockedRules: input.majorBlockedRules.filter((_, i) => i !== idx) })}>삭제</button>
+              <button
+                disabled={!unlocked}
+                onClick={() => setInput({ majorBlockedRules: input.majorBlockedRules.filter((_, i) => i !== idx) })}
+              >
+                삭제
+              </button>
             </li>
           ))}
         </ul>
@@ -298,15 +345,65 @@ export default function InitialSetupPage() {
 
       <section style={{ marginBottom: 18, opacity: unlocked ? 1 : 0.6 }}>
         <h4>교수 관리</h4>
-        <button disabled={!unlocked} onClick={addProfessor}>교수 추가</button>
-        <ul>
-          {input.professors.map((p) => (
-            <li key={p.id} style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-              <b>{p.name}</b> <span style={{ opacity: 0.6 }}>{p.id}</span>
-              <button disabled={!unlocked} onClick={() => deleteProfessor(p.id)}>삭제</button>
-            </li>
-          ))}
-        </ul>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <button disabled={!unlocked} onClick={addProfessor}>
+            교수 추가
+          </button>
+          <span style={{ opacity: 0.7, fontSize: 12 }}>※ 교수명 변경은 즉시 전체 화면에 반영됩니다.</span>
+        </div>
+
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+          {input.professors.length === 0 ? (
+            <div style={{ opacity: 0.7 }}>등록된 교수가 없습니다.</div>
+          ) : (
+            input.professors.map((p, idx) => (
+              <div
+                key={p.id}
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  border: "1px solid #eee",
+                  borderRadius: 10,
+                  padding: "8px 10px",
+                  background: "white",
+                  flexWrap: "wrap",
+                }}
+              >
+                <span style={{ width: 70, opacity: 0.7 }}>교수 {idx + 1}</span>
+
+                <input
+                  value={p.name}
+                  disabled={!unlocked}
+                  onChange={(e) => updateProfessorName(p.id, e.target.value)}
+                  onBlur={(e) => {
+                    // 공백 정리 + 빈 값 방지
+                    const v = e.target.value.trim();
+                    if (!unlocked) return;
+                    if (v === "") updateProfessorName(p.id, `교수${idx + 1}`);
+                    else if (v !== e.target.value) updateProfessorName(p.id, v);
+                  }}
+                  placeholder="교수명 입력"
+                  style={{
+                    flex: 1,
+                    minWidth: 200,
+                    padding: "8px 10px",
+                    borderRadius: 10,
+                    border: "1px solid #e5e5e5",
+                    outline: "none",
+                  }}
+                />
+
+                <span style={{ opacity: 0.55, fontSize: 12 }}>{p.id}</span>
+
+                <button disabled={!unlocked} onClick={() => deleteProfessor(p.id)}>
+                  삭제
+                </button>
+              </div>
+            ))
+          )}
+        </div>
       </section>
 
       <section style={{ marginBottom: 18, opacity: unlocked ? 1 : 0.6 }}>
@@ -319,7 +416,12 @@ export default function InitialSetupPage() {
             <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
               <label>
                 과목명:
-                <input disabled={!unlocked} value={newCourseName} onChange={(e) => setNewCourseName(e.target.value)} style={{ marginLeft: 6, padding: 6 }} />
+                <input
+                  disabled={!unlocked}
+                  value={newCourseName}
+                  onChange={(e) => setNewCourseName(e.target.value)}
+                  style={{ marginLeft: 6, padding: 6 }}
+                />
               </label>
 
               <label>
@@ -337,7 +439,12 @@ export default function InitialSetupPage() {
 
               <label>
                 전공/교양:
-                <select disabled={!unlocked} value={newMajorType} onChange={(e) => setNewMajorType(e.target.value as MajorType)} style={{ marginLeft: 6, padding: 6 }}>
+                <select
+                  disabled={!unlocked}
+                  value={newMajorType}
+                  onChange={(e) => setNewMajorType(e.target.value as MajorType)}
+                  style={{ marginLeft: 6, padding: 6 }}
+                >
                   <option value="MAJOR">전공</option>
                   <option value="LIBERAL">교양</option>
                 </select>
@@ -345,21 +452,37 @@ export default function InitialSetupPage() {
 
               <label>
                 담당교수:
-                <select disabled={!unlocked} value={newProfessorId} onChange={(e) => setNewProfessorId(e.target.value)} style={{ marginLeft: 6, padding: 6 }}>
-                  {input.professors.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                <select
+                  disabled={!unlocked}
+                  value={newProfessorId}
+                  onChange={(e) => setNewProfessorId(e.target.value)}
+                  style={{ marginLeft: 6, padding: 6 }}
+                >
+                  {input.professors.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
                 </select>
               </label>
 
               <label>
                 시수:
-                <select disabled={!unlocked} value={newSlotLength} onChange={(e) => setNewSlotLength(Number(e.target.value))} style={{ marginLeft: 6, padding: 6 }}>
+                <select
+                  disabled={!unlocked}
+                  value={newSlotLength}
+                  onChange={(e) => setNewSlotLength(Number(e.target.value))}
+                  style={{ marginLeft: 6, padding: 6 }}
+                >
                   <option value={2}>2시간</option>
                   <option value={3}>3시간</option>
                   <option value={4}>4시간</option>
                 </select>
               </label>
 
-              <button disabled={!unlocked} onClick={addOffering}>과목 추가</button>
+              <button disabled={!unlocked} onClick={addOffering}>
+                과목 추가
+              </button>
             </div>
 
             <hr />
@@ -375,7 +498,9 @@ export default function InitialSetupPage() {
                     {input.professors.find((p) => p.id === o.professorId)?.name ?? "교수?"}
                   </span>
                   <span style={{ opacity: 0.6 }}>{o.id}</span>
-                  <button disabled={!unlocked} onClick={() => deleteOffering(o.id)}>삭제</button>
+                  <button disabled={!unlocked} onClick={() => deleteOffering(o.id)}>
+                    삭제
+                  </button>
                 </li>
               ))}
             </ul>
