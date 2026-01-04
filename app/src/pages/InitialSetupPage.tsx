@@ -88,7 +88,9 @@ export default function InitialSetupPage() {
   function addProfessor() {
     if (!unlocked) return;
     const id = `p_${Math.random().toString(36).slice(2, 8)}`;
-    setInput({ professors: [...input.professors, { id, name: `교수${input.professors.length + 1}` }] });
+    setInput({
+      professors: [...input.professors, { id, name: `교수${input.professors.length + 1}` }],
+    });
     if (!newProfessorId) setNewProfessorId(id);
   }
 
@@ -99,6 +101,7 @@ export default function InitialSetupPage() {
     setInput({ professors: next });
   }
 
+  // ✅ 실제 삭제(연쇄삭제 포함)
   function deleteProfessor(professorId: string) {
     if (!unlocked) return;
 
@@ -116,6 +119,37 @@ export default function InitialSetupPage() {
     if (newProfessorId === professorId) {
       setNewProfessorId(nextProfessors[0]?.id ?? "");
     }
+  }
+
+  // ✅ 삭제 확인 팝업(연쇄 삭제 안내 + 예시 리스트)
+  function requestDeleteProfessor(professorId: string) {
+    if (!unlocked) return;
+
+    const prof = input.professors.find((p) => p.id === professorId);
+    if (!prof) return;
+
+    const affectedOfferings = input.offerings.filter((o) => o.professorId === professorId);
+    const count = affectedOfferings.length;
+
+    const sample = affectedOfferings
+      .slice(0, 5)
+      .map((o) => `- ${o.courseName} (${o.grade}학년)`)
+      .join("\n");
+
+    const more = count > 5 ? `\n... 외 ${count - 5}개` : "";
+
+    const msg =
+      `교수 "${prof.name}"을(를) 삭제하시겠습니까?\n\n` +
+      `⚠️ 함께 삭제되는 항목\n` +
+      `- 해당 교수가 담당인 과목: ${count}개\n` +
+      `- 해당 과목들의 희망시간(availability) 설정\n\n` +
+      (count > 0 ? `삭제 대상 과목 예시:\n${sample}${more}\n\n` : "") +
+      `진행할까요?`;
+
+    const ok = window.confirm(msg);
+    if (!ok) return;
+
+    deleteProfessor(professorId);
   }
 
   function addOffering() {
@@ -253,7 +287,9 @@ export default function InitialSetupPage() {
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button
             disabled={!unlocked}
-            onClick={() => setInput({ govtTrainingRules: [...input.govtTrainingRules, { grade: 2, afternoonStartSlot: 4 }] })}
+            onClick={() =>
+              setInput({ govtTrainingRules: [...input.govtTrainingRules, { grade: 2, afternoonStartSlot: 4 }] })
+            }
           >
             예시 추가(2학년 13시부터 불가)
           </button>
@@ -282,7 +318,9 @@ export default function InitialSetupPage() {
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button
             disabled={!unlocked}
-            onClick={() => setInput({ majorBlockedRules: [...input.majorBlockedRules, { day: "WED", startSlot: 0, slotLength: 9 }] })}
+            onClick={() =>
+              setInput({ majorBlockedRules: [...input.majorBlockedRules, { day: "WED", startSlot: 0, slotLength: 9 }] })
+            }
           >
             예시 추가(수요일 09~18 전공 불가)
           </button>
@@ -299,7 +337,9 @@ export default function InitialSetupPage() {
                 value={r.day}
                 onChange={(e) => {
                   const day = e.target.value as Day;
-                  setInput({ majorBlockedRules: input.majorBlockedRules.map((x, i) => (i === idx ? { ...x, day } : x)) });
+                  setInput({
+                    majorBlockedRules: input.majorBlockedRules.map((x, i) => (i === idx ? { ...x, day } : x)),
+                  });
                 }}
               >
                 {DAYS.map((d) => (
@@ -315,7 +355,11 @@ export default function InitialSetupPage() {
                 value={r.startSlot}
                 onChange={(e) => {
                   const startSlot = Number(e.target.value);
-                  setInput({ majorBlockedRules: input.majorBlockedRules.map((x, i) => (i === idx ? { ...x, startSlot } : x)) });
+                  setInput({
+                    majorBlockedRules: input.majorBlockedRules.map((x, i) =>
+                      i === idx ? { ...x, startSlot } : x
+                    ),
+                  });
                 }}
                 style={{ width: 70 }}
               />
@@ -326,7 +370,11 @@ export default function InitialSetupPage() {
                 value={r.slotLength}
                 onChange={(e) => {
                   const slotLength = Number(e.target.value);
-                  setInput({ majorBlockedRules: input.majorBlockedRules.map((x, i) => (i === idx ? { ...x, slotLength } : x)) });
+                  setInput({
+                    majorBlockedRules: input.majorBlockedRules.map((x, i) =>
+                      i === idx ? { ...x, slotLength } : x
+                    ),
+                  });
                 }}
                 style={{ width: 70 }}
               />
@@ -397,7 +445,8 @@ export default function InitialSetupPage() {
 
                 <span style={{ opacity: 0.55, fontSize: 12 }}>{p.id}</span>
 
-                <button disabled={!unlocked} onClick={() => deleteProfessor(p.id)}>
+                {/* ✅ 여기! deleteProfessor -> requestDeleteProfessor */}
+                <button disabled={!unlocked} onClick={() => requestDeleteProfessor(p.id)}>
                   삭제
                 </button>
               </div>
